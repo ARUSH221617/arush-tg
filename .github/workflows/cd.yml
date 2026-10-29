@@ -1,0 +1,107 @@
+name: CD — Build GHCR Image & Deploy Production
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: "Deployment target (ghcr-only, ssh-docker, windows-self-hosted)"
+        required: false
+        default: "ghcr-only"
+        type: choice
+        options:
+          - ghcr-only
+          - ssh-docker
+          - windows-self-hosted
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push-ghcr:
+    name: Build & Push Docker Image to GHCR
+    runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-ssh-docker:
+    name: Rollout via SSH & Docker Compose
+    needs: build-and-push-ghcr
+    if: ${{ github.event.inputs.deploy_target == 'ssh-docker' && secrets.DEPLOY_SSH_HOST != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy container & verify /health endpoint
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          script: |
+            set -e
+            cd ${{ secrets.DEPLOY_APP_DIR || '/opt/arush-tg' }}
+            python3 run.py --backup-now || true
+            docker compose pull
+            docker compose up -d --remove-orphans
+            sleep 5
+            curl -fsS http://127.0.0.1:8089/health
+
+  deploy-windows-host:
+    name: Deploy to Windows Self-Hosted Runner (NSSM Service)
+    needs: build-and-push-ghcr
+    if: ${{ github.event.inputs.deploy_target == 'windows-self-hosted' }}
+    runs-on: [self-hosted, windows]
+    steps:
+      - name: Checkout latest main branch
+        uses: actions/checkout@v4
+
+      - name: Backup database & restart NSSM Windows Service
+        shell: powershell
+        run: |
+          python -m pip install -r requirements.txt
+          python run.py --backup-now
+          if (Get-Service -Name "ArushManagerAgent" -ErrorAction SilentlyContinue) {
+            Restart-Service -Name "ArushManagerAgent" -Force
+            Write-Host "✅ Restarted ArushManagerAgent Windows Service."
+          } else {
+            Write-Host "ℹ️ Service not installed yet; run .\scripts\install_service.ps1 as Administrator."
+          }

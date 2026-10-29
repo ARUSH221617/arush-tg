@@ -1,0 +1,45 @@
+name: Release — Package & Publish Release Archive
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Verify & Publish GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies & run tests
+        run: |
+          pip install -r requirements.txt
+          python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Create release archive
+        run: |
+          python -c "
+          import zipfile, pathlib
+          out = 'arush-tg-${{ github.ref_name }}.zip'
+          root = pathlib.Path('.')
+          with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
+              for p in sorted(root.rglob('*')):
+                  if p.is_file() and not any(part in p.parts for part in ('.git', 'data', '__pycache__')) and not p.name.endswith('.zip'):
+                      zf.write(p, p.as_posix())
+          "
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: arush-tg-${{ github.ref_name }}.zip
+          generate_release_notes: true

@@ -3,13 +3,25 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: ghcr.io/arush221617/arush-tg:latest
     container_name: arush-manager-agent
     restart: unless-stopped
     env_file:
       - .env
+    ports:
+      - "127.0.0.1:8089:8089"
     volumes:
       - ./data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # To connect to host 9Router when running in Docker,
-    # set NINEROUTER_URL=http://host.docker.internal:20128 in your .env
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8089/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"

@@ -1,0 +1,97 @@
+name: CI — Lint, Test & Security Audit
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-compile:
+    name: Lint & Bytecode Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install lint tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pydantic pydantic-settings Pillow
+
+      - name: Verify Python syntax compilation across all modules
+        run: |
+          python -m py_compile config.py run.py bot/*.py core/*.py tools/*.py scripts/*.py tests/*.py
+
+      - name: Run Ruff Linter
+        run: |
+          ruff check . --select=E9,F63,F7,F82 --show-source
+
+  test-matrix:
+    name: Test Suite (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    needs: lint-and-compile
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Phase 1–7 Unit & Integration Tests
+        env:
+          VAULT_DATA_DIR: ${{ runner.temp }}/arush_test_data
+          NINEROUTER_URL: http://127.0.0.1:20128
+        run: |
+          python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Verify CLI Diagnostics & Backup Mode
+        env:
+          VAULT_DATA_DIR: ${{ runner.temp }}/arush_test_data
+        run: |
+          python run.py --check-only
+          python run.py --backup-now
+
+  docker-build-check:
+    name: Validate Docker Container Build
+    needs: lint-and-compile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: arush-tg:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

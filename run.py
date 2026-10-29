@@ -1,15 +1,26 @@
 import asyncio
+import argparse
 import sys
-from pathlib import Path
+import io
+
+if sys.platform == "win32":
+    try:
+        if sys.stdout and hasattr(sys.stdout, "buffer"):
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        if sys.stderr and hasattr(sys.stderr, "buffer"):
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from config import settings
 from core.router_client import router_client
 from tools.computer_use import controller as computer_ctrl
-from bot.app import start_bot
+from scripts.backup import run_daily_backup
 
 async def run_diagnostics_and_validation() -> bool:
     """
     Checks 9Router health and verifies that all default models configured in .env
-    actually exist in 9Router's model registries.
+    (Chat, STT, Image, Embedding) exist in 9Router's model registries.
     """
     print("\n🔍 STEP 1: Checking 9Router Connectivity...")
     is_active = await router_client.check_health()
@@ -24,79 +35,72 @@ async def run_diagnostics_and_validation() -> bool:
     print("\n🔍 STEP 2: Fetching 9Router Models & Validating Defaults from .env...")
     validation = await router_client.validate_configured_models()
 
-    all_models_found = True
-
-    # 1. Chat / Agent Model
-    chat_info = validation["chat"]
-    cfg_chat = chat_info["configured"]
-    if chat_info["exists"]:
-        print(f"  ✅ [Chat/Agent] Model verified: '{cfg_chat}'")
-    else:
-        all_models_found = False
-        print(f"  ⚠️ [Chat/Agent] Model '{cfg_chat}' NOT found in 9Router!")
-        available = chat_info["available"]
-        if available:
-            print(f"     Available chat models ({len(available)}):")
-            for m in available[:8]:
-                print(f"       • {m}")
-            if len(available) > 8:
-                print(f"       ... and {len(available) - 8} more.")
-            print(f"     👉 Update AGENT_MODEL in your .env with one of the above.")
+    for label, key in [
+        ("Chat/Agent", "chat"),
+        ("STT Audio", "stt"),
+        ("Image Gen", "image"),
+        ("Embedding", "embedding")
+    ]:
+        info = validation.get(key, {})
+        cfg = info.get("configured")
+        if info.get("exists"):
+            print(f"  ✅ [{label:10s}] Model verified: '{cfg}'")
         else:
-            print("     (No chat models returned by 9Router or auth required)")
-
-    # 2. STT (Speech-to-Text) Model
-    stt_info = validation["stt"]
-    cfg_stt = stt_info["configured"]
-    if stt_info["exists"]:
-        print(f"  ✅ [STT Audio]  Model verified: '{cfg_stt}'")
-    else:
-        all_models_found = False
-        print(f"  ⚠️ [STT Audio]  Model '{cfg_stt}' NOT found in 9Router!")
-        available = stt_info["available"]
-        if available:
-            print(f"     Available STT models ({len(available)}):")
-            for m in available[:6]:
-                print(f"       • {m}")
-            print(f"     👉 Update STT_MODEL in your .env with one of the above.")
-        else:
-            print("     (No STT models returned by 9Router)")
-
-    # 3. Image Generation Model
-    img_info = validation["image"]
-    cfg_img = img_info["configured"]
-    if img_info["exists"]:
-        print(f"  ✅ [Image Gen]  Model verified: '{cfg_img}'")
-    else:
-        all_models_found = False
-        print(f"  ⚠️ [Image Gen]  Model '{cfg_img}' NOT found in 9Router!")
-        available = img_info["available"]
-        if available:
-            print(f"     Available image models ({len(available)}):")
-            for m in available[:6]:
-                print(f"       • {m}")
-            print(f"     👉 Update IMAGE_MODEL in your .env with one of the above.")
-        else:
-            print("     (No image models returned by 9Router)")
+            print(f"  ⚠️ [{label:10s}] Model '{cfg}' NOT found in 9Router (will use fallback if needed)")
 
     return True
 
+
 async def main():
+    parser = argparse.ArgumentParser(description="Arush Manager Agent Runner")
+    parser.add_argument("--check-only", action="store_true", help="Run startup diagnostics and exit (used by CI/CD)")
+    parser.add_argument("--backup-now", action="store_true", help="Run immediate SQLite & .env backup and exit")
+    parser.add_argument("--set-commands", action="store_true", help="Register Telegram slash commands and exit")
+    args = parser.parse_args()
+
+    if args.backup_now:
+        res = run_daily_backup()
+        print(f"✅ Backup completed at: {res['backup_dir']}")
+        return
+
+    if args.set_commands:
+        print("\n🔄 Registering Telegram bot slash commands...")
+        try:
+            from aiogram import Bot
+            from aiogram.client.session.aiohttp import AiohttpSession
+            from bot.commands import setup_bot_commands
+            session = AiohttpSession(proxy=settings.TELEGRAM_PROXY) if settings.TELEGRAM_PROXY else None
+            bot = Bot(token=settings.TELEGRAM_BOT_TOKEN, session=session)
+            ok = await setup_bot_commands(bot)
+            await bot.session.close()
+            if ok:
+                print("✅ Telegram slash commands registered successfully.")
+            else:
+                print("⚠️ Some commands could not be registered (check network or token).")
+        except Exception as e:
+            print(f"❌ Error during command registration: {e}")
+        return
+
     print("=" * 65)
-    print("🚀 ARUSH MANAGER AGENT - STARTUP SEQUENCE")
+    print("🚀 ARUSH MANAGER AGENT - STARTUP SEQUENCE (PHASES 1–7)")
     print("=" * 65)
     print(f"• Telegram Bot    : @arush_agentbot")
     print(f"• Vault Data Dir  : {settings.VAULT_DATA_DIR}")
     print(f"• 9Router URL     : {settings.NINEROUTER_URL}")
+    print(f"• ComfyUI URL     : {settings.COMFYUI_URL}")
     print(f"• Computer Target : {computer_ctrl.target_width}x{computer_ctrl.target_height}")
-    
+    print(f"• Health Endpoint : http://0.0.0.0:{settings.HEALTHCHECK_PORT}/health")
+
     if settings.TELEGRAM_PROXY:
         print(f"• Telegram Proxy  : {settings.TELEGRAM_PROXY}")
     else:
         print(f"• Telegram Proxy  : Direct (No Proxy configured)")
 
-    # Run 9Router active check + model verification
-    is_ready = await run_diagnostics_and_validation()
+    await run_diagnostics_and_validation()
+
+    if args.check_only:
+        print("\n✅ Diagnostics check completed (--check-only).")
+        return
 
     print("\n🛡️ Whitelist Security:")
     if settings.ALLOWED_TELEGRAM_USER_IDS:
@@ -106,10 +110,12 @@ async def main():
         print("     The first user to message @arush_agentbot will be shown their ID.")
 
     print("\n" + "=" * 65)
-    print("🤖 Starting Telegram Polling... (Press Ctrl+C to stop)")
+    print("🤖 Starting Telegram Polling + Freelance Radar + Scheduler...")
     print("=" * 65)
 
+    from bot.app import start_bot
     await start_bot()
+
 
 if __name__ == "__main__":
     try:
