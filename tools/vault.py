@@ -202,9 +202,17 @@ class ProjectVault:
                 suggested_timeline TEXT DEFAULT '',
                 proposal_draft TEXT DEFAULT '',
                 notified INTEGER DEFAULT 0,
+                system_one_is_job REAL DEFAULT 0.0,
+                system_one_stack_fit REAL DEFAULT 0.0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """)
+            existing_fl_cols = {
+                row["name"] for row in cursor.execute("PRAGMA table_info(freelance_leads)").fetchall()
+            }
+            for col in ("system_one_is_job", "system_one_stack_fit"):
+                if col not in existing_fl_cols:
+                    cursor.execute(f"ALTER TABLE freelance_leads ADD COLUMN {col} REAL DEFAULT 0.0")
             conn.commit()
 
     # ==========================================================
@@ -751,6 +759,29 @@ class ProjectVault:
     # ==========================================================
     # Phase 3: Freelance Radar Persistence
     # ==========================================================
+    def is_lead_known(self, external_id: str) -> bool:
+        """Checks if a lead with external_id has already been recorded."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM freelance_leads WHERE external_id = ? LIMIT 1", (str(external_id),))
+            return cursor.fetchone() is not None
+
+    def filter_unseen_leads(self, leads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filters out leads that have already been recorded in the database."""
+        if not leads:
+            return []
+        unseen = []
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            for lead in leads:
+                ext_id = str(lead.get("external_id", ""))
+                if not ext_id:
+                    continue
+                cursor.execute("SELECT 1 FROM freelance_leads WHERE external_id = ? LIMIT 1", (ext_id,))
+                if not cursor.fetchone():
+                    unseen.append(lead)
+        return unseen
+
     def save_freelance_lead(self, lead: Dict[str, Any]) -> Dict[str, Any]:
         """Saves a scraped freelance project lead if not already seen."""
         ext_id = str(lead["external_id"])
@@ -767,9 +798,10 @@ class ProjectVault:
             INSERT INTO freelance_leads (
                 external_id, platform, title, description, category,
                 budget_min, budget_max, currency, employer_name, employer_rating,
-                url, match_score, suggested_bid, suggested_timeline, proposal_draft, notified
+                url, match_score, suggested_bid, suggested_timeline, proposal_draft, notified,
+                system_one_is_job, system_one_stack_fit
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 ext_id,
                 lead.get("platform", "unknown"),
@@ -786,7 +818,9 @@ class ProjectVault:
                 lead.get("suggested_bid", ""),
                 lead.get("suggested_timeline", ""),
                 lead.get("proposal_draft", ""),
-                1 if lead.get("notified") else 0
+                1 if lead.get("notified") else 0,
+                float(lead.get("system_one_is_job") or 0.0),
+                float(lead.get("system_one_stack_fit") or 0.0)
             ))
             conn.commit()
             cursor.execute("SELECT * FROM freelance_leads WHERE id = ?", (cursor.lastrowid,))

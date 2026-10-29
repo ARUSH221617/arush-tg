@@ -60,6 +60,7 @@ if HAS_PYDANTIC:
         NINEROUTER_KEY: Optional[str] = None
 
         # 3. Configurable Default Models & Agent Controls
+        SYSTEM_ONE_MODEL: str = "oc/jev-1.13-free"
         AGENT_MODEL: str = "anthropic/claude-3-7-sonnet"
         AGENT_MAX_TURNS: int = 200
         AGENT_TOOL_REPEAT_LIMIT: int = 3
@@ -69,6 +70,8 @@ if HAS_PYDANTIC:
 
         # 4. Freelance Radar (Phase 3)
         RADAR_POLL_INTERVAL_SECONDS: int = 600
+        RADAR_SYSTEM_ONE_BATCH_SIZE: int = 20
+        RADAR_SYSTEM_ONE_THRESHOLD: float = 0.55
         RADAR_MIN_BUDGET_TOMAN: float = 1_000_000.0
         RADAR_CATEGORIES: Union[List[str], str] = [
             "python", "react", "bot", "ai", "web scraping", "telegram", "fastapi", "django", "automation"
@@ -137,6 +140,7 @@ else:
             )
             self.NINEROUTER_URL = os.getenv("NINEROUTER_URL", "http://localhost:20128")
             self.NINEROUTER_KEY = os.getenv("NINEROUTER_KEY") or None
+            self.SYSTEM_ONE_MODEL = os.getenv("SYSTEM_ONE_MODEL", "oc/jev-1.13-free")
             self.AGENT_MODEL = os.getenv("AGENT_MODEL", "anthropic/claude-3-7-sonnet")
             self.AGENT_MAX_TURNS = int(os.getenv("AGENT_MAX_TURNS", "200"))
             self.AGENT_TOOL_REPEAT_LIMIT = int(os.getenv("AGENT_TOOL_REPEAT_LIMIT", "3"))
@@ -144,6 +148,8 @@ else:
             self.IMAGE_MODEL = os.getenv("IMAGE_MODEL", "black-forest-labs/flux-1-schnell")
             self.EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "openai/text-embedding-3-small")
             self.RADAR_POLL_INTERVAL_SECONDS = int(os.getenv("RADAR_POLL_INTERVAL_SECONDS", "600"))
+            self.RADAR_SYSTEM_ONE_BATCH_SIZE = int(os.getenv("RADAR_SYSTEM_ONE_BATCH_SIZE", "20"))
+            self.RADAR_SYSTEM_ONE_THRESHOLD = float(os.getenv("RADAR_SYSTEM_ONE_THRESHOLD", "0.55"))
             self.RADAR_MIN_BUDGET_TOMAN = float(os.getenv("RADAR_MIN_BUDGET_TOMAN", "1000000"))
             self.RADAR_CATEGORIES = _parse_str_list(
                 os.getenv("RADAR_CATEGORIES"),

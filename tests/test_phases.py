@@ -188,6 +188,44 @@ class TestArushPhases1To7(unittest.TestCase):
         self.assertIn("karlancer", alert_md)
         self.assertIn("https://www.karlancer.com/projects/kl_5512", alert_md)
 
+    def test_phase3_system_one_batch_filtering(self):
+        radar = FreelanceRadar()
+        leads = [
+            {
+                "external_id": "test_lead_s1_1",
+                "platform": "telegram:@python_jobs",
+                "title": "پروژه ساخت ربات تلگرام با پایتون",
+                "description": "نیاز به برنامه‌نویس پایتون مسلط به aiogram برای پیاده‌سازی ربات سفارش‌گیری",
+                "budget_min": 5000000,
+                "budget_max": 8000000,
+                "currency": "Toman"
+            },
+            {
+                "external_id": "test_lead_s1_2",
+                "platform": "telegram:@news",
+                "title": "مقاله آموزشی هوش مصنوعی چیست؟",
+                "description": "در این وبینار رایگان به مباحث هوش مصنوعی می‌پردازیم",
+                "budget_min": 0,
+                "budget_max": 0,
+                "currency": "Toman"
+            }
+        ]
+        from unittest.mock import patch, AsyncMock
+        mock_answers = {
+            "is_job_1": {"type": "noul", "noul": 0.95},
+            "matches_stack_1": {"type": "noul", "noul": 0.92},
+            "is_job_2": {"type": "noul", "noul": 0.05},
+            "matches_stack_2": {"type": "noul", "noul": 0.40}
+        }
+        with patch("core.router_client.router_client.system_one", new_callable=AsyncMock) as mock_s1:
+            mock_s1.return_value = mock_answers
+            filtered = asyncio.run(radar.batch_filter_leads_system_one(leads))
+            self.assertEqual(len(filtered), 1)
+            self.assertEqual(filtered[0]["external_id"], "test_lead_s1_1")
+            self.assertEqual(filtered[0]["system_one_is_job"], 0.95)
+            self.assertEqual(filtered[0]["system_one_stack_fit"], 0.92)
+            self.assertGreaterEqual(filtered[0]["match_score"], 90)
+
     # ----------------------------------------------------------
     # Phase 4: Visual Computer Use, Confirmation Gate, Browser & GitHub
     # ----------------------------------------------------------

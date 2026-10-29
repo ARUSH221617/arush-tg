@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import math
 from pathlib import Path
 from typing import Optional, Dict, Any, Union, List
@@ -177,6 +178,44 @@ class NineRouterClient:
                 if choices:
                     return choices[0].get("message", {}).get("content", "") or ""
                 return ""
+
+    async def system_one(
+        self,
+        state: Union[str, Dict[str, Any], List[Any]],
+        questions: Dict[str, Dict[str, Any]],
+        model: Optional[str] = None,
+        timeout_seconds: int = 45,
+    ) -> Dict[str, Any]:
+        """
+        Query System 1 probabilistic model (e.g. oc/jev-1.13-free) via POST /v1/systemone.
+        Accepts a string or structured JSON value (dict/list) as state, and typed questions.
+        Supports question types: 'noul' (probability 0-1), 'choice' (classification), 'score' (rubric).
+        Returns a dict of raw answers: {question_id: {'type': ..., ...}}
+        """
+        if aiohttp is None:
+            raise RuntimeError("aiohttp is not installed")
+        chosen_model = model or getattr(settings, "SYSTEM_ONE_MODEL", "oc/jev-1.13-free")
+        url = f"{self.base_url}/v1/systemone"
+
+        state_payload = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
+        payload: Dict[str, Any] = {
+            "model": chosen_model,
+            "state": state_payload,
+            "questions": questions,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json=payload,
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds)
+            ) as resp:
+                if resp.status != 200:
+                    err_text = await resp.text()
+                    raise RuntimeError(f"9Router SystemOne Error ({resp.status}): {err_text}")
+                data = await resp.json()
+                return data.get("answers", {})
 
     async def transcribe_audio(
         self,
