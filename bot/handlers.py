@@ -20,7 +20,7 @@ except ImportError:
     Router = object  # type: ignore
 
 from config import settings
-from bot.formatter import send_formatted_reply, markdown_to_telegram_html
+from bot.formatter import send_formatted_reply
 from core.agent import agent
 from core.router_client import router_client
 from core.scheduler import routine_scheduler
@@ -833,21 +833,144 @@ if HAS_AIOGRAM:
 
     @router.message(Command("radar"))
     async def handle_radar_cmd(message: Message):
-        status_msg = await message.answer("📡 در حال اسکن مستقیم کارلنسر، پونیشا و کانال‌های تلگرام...")
-        await freelance_radar.poll_sources_once()
-        leads = vault.get_top_freelance_leads(min_score=0, limit=3)
-        await status_msg.delete()
-        if not leads:
-            await send_formatted_reply(message, "📡 هنوز پروژه فریلنسری منطبقی در دیتابیس ثبت نشده است.")
-            return
-        for ld in leads:
-            alert_txt = freelance_radar.format_telegram_alert(ld)
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="🚀 مشاهده و ارسال پیشنهاد در سایت", url=ld.get("url") or "https://ponisha.ir")]
-                ]
+        parts = (message.text or "").split(maxsplit=2)
+        sub = parts[1].lower() if len(parts) > 1 else "top"
+
+        if sub == "scan":
+            status_msg = await message.answer("📡 در حال اسکن کامل تمام منابع داخلی، کانال‌های تلگرام و فیدهای ارزی...")
+            alerts = await freelance_radar.poll_sources_once()
+            await status_msg.delete()
+            if not alerts:
+                await send_formatted_reply(message, "📡 اسکن کامل شد. پروژه جدیدی با تطابق بالای ۸۰٪ در این لحظه یافت نشد.")
+                return
+            await send_formatted_reply(message, f"🎯 **{len(alerts)} فرصت فریلنسری جدید کشف و ارزیابی شد:**")
+            for ld in alerts[:3]:
+                alert_txt = freelance_radar.format_telegram_alert(ld)
+                kb = freelance_radar.create_alert_keyboard(ld)
+                await send_formatted_reply(message, alert_txt, reply_markup=kb)
+
+        elif sub == "stats":
+            stats = vault.get_radar_stats()
+            health = freelance_radar.get_health_report()
+            h_lines = []
+            for src, info in health.items():
+                st_icon = "🟢" if info["status"] == "ok" else ("🟡" if info["status"] == "warning" else "🔴")
+                h_lines.append(f"  • {st_icon} **{src}:** {info['status']} (خطاها: `{info['errors']}` | آخرین: `{info['last_poll'] or '-'}`)")
+
+            plat_lines = []
+            for p, c in stats["by_platform"].items():
+                plat_lines.append(f"  • `{p}`: **{c}** پروژه")
+
+            txt = (
+                f"📊 **آمار و عملکرد رادار فریلنسری (Radar CRM & Health):**\n\n"
+                f"• **مجموع پروژه‌های اسکن‌شده:** `{stats['total_leads']}`\n"
+                f"• **فرصت‌های با تطابق بالا (≥80%):** `{stats['high_match_leads']}`\n"
+                f"• **هشدارهای ارسال‌شده:** `{stats['notified_leads']}`\n"
+                f"• **پروژه‌های تبدیل‌شده (Won/Converted):** `{stats['converted_projects']}`\n"
+                f"• **پیشنهادات ارسال‌شده (Applied):** `{stats['applied_leads']}`\n"
+                f"• **پروژه‌های ردشده (Rejected):** `{stats['rejected_leads']}`\n\n"
+                f"🌐 **تفکیک پلتفرم‌ها:**\n" + ("\n".join(plat_lines) if plat_lines else "  • موردی ثبت نشده") + "\n\n"
+                "🩺 **وضعیت سلامت منابع (Source Health):**\n" + "\n".join(h_lines)
             )
-            await send_formatted_reply(message, alert_txt, reply_markup=kb)
+            await send_formatted_reply(message, txt)
+
+        else:
+            leads = vault.get_top_freelance_leads(min_score=settings.RADAR_MATCH_THRESHOLD, limit=3)
+            if not leads:
+                leads = vault.get_top_freelance_leads(min_score=0, limit=3)
+            if not leads:
+                await send_formatted_reply(message, "📡 هنوز پروژه فریلنسری در دیتابیس ثبت نشده است. برای اسکن زنده: `/radar scan`")
+                return
+            for ld in leads:
+                alert_txt = freelance_radar.format_telegram_alert(ld)
+                kb = freelance_radar.create_alert_keyboard(ld)
+                await send_formatted_reply(message, alert_txt, reply_markup=kb)
+
+    @router.callback_query(F.data.startswith("radar:"))
+    async def handle_radar_callback(callback: CallbackQuery):
+        parts = callback.data.split(":")
+        if len(parts) < 3:
+            await callback.answer("فرمت داده نامعتبر است.", show_alert=True)
+            return
+
+        action = parts[1]
+        try:
+            lead_id = int(parts[2])
+        except ValueError:
+            await callback.answer("شناسه پروژه نامعتبر است.", show_alert=True)
+            return
+
+        lead = vault.get_lead_by_id(lead_id)
+        if not lead:
+            await callback.answer("پروژه در دیتابیس یافت نشد.", show_alert=True)
+            return
+
+        if action == "copy":
+            clean_proposal = lead.get("proposal_draft") or "پروپوزالی ثبت نشده است."
+            await callback.message.reply(
+                f"📋 **متن آماده ارسال پروپوزال:**\n\n{clean_proposal}"
+            )
+            vault.update_lead_status(lead_id, status="applied")
+            await callback.answer("متن پروپوزال ارسال شد!")
+
+        elif action == "convert":
+            try:
+                res = vault.convert_lead_to_project(lead_id)
+                proj = res["project"]
+                await callback.message.reply(
+                    f"✅ **پروژه با موفقیت ایجاد و ذخیره شد!**\n\n"
+                    f"📁 **نام پروژه:** `{proj['name']}`\n"
+                    f"🔖 **شناسه (Slug):** `{proj['slug']}`\n"
+                    f"💰 **بودجه:** `{proj.get('budget', '-')}`\n"
+                    f"📂 پوشه کاری و مستندات پروپوزال در Vault ایجاد شد.\n"
+                    f"برای سوییچ به پروژه: `/project {proj['slug']}`"
+                )
+                await callback.answer("پروژه ایجاد گردید!")
+            except Exception as e:
+                await callback.answer(f"خطا در ایجاد پروژه: {e}", show_alert=True)
+
+        elif action == "reroll":
+            await callback.answer("در حال بازنویسی پروپوزال...")
+            new_eval = await freelance_radar.matchmaker.evaluate_lead({
+                **lead,
+                "title": f"[Direct Pitch] {lead.get('title')}"
+            })
+            if new_eval.get("proposal_draft"):
+                lead["proposal_draft"] = new_eval["proposal_draft"]
+                vault.save_freelance_lead(lead)
+                await callback.message.reply(
+                    f"🔄 **نسخه بازنویسی‌شده پروپوزال:**\n\n```\n{lead['proposal_draft']}\n```"
+                )
+            else:
+                await callback.message.reply("امکان بازنویسی در این لحظه وجود نداشت.")
+
+        elif action == "reject":
+            vault.update_lead_status(lead_id, status="rejected", feedback=-1, rejection_reason="User rejected from chat")
+            await callback.answer("پروژه رد شد و بازخورد منفی ثبت شد.")
+            try:
+                await callback.message.edit_text(
+                    f"❌ **پروژه «{lead['title']}» رد شد.**\n(سیستم از این بازخورد برای فیلتر هوشمند پروژه‌های مشابه استفاده می‌کند.)"
+                )
+            except Exception:
+                pass
+
+        elif action == "bid":
+            await callback.answer("در حال راه‌اندازی مرورگر جهت پیش‌نویس پیشنهاد...")
+            status_msg = await callback.message.reply("🌐 در حال باز کردن صفحه در مرورگر و بررسی فرم پیشنهاد...")
+            res = await freelance_radar.prepare_browser_bid(lead_id)
+            await status_msg.delete()
+            if res.get("status") == "success" or res.get("screenshot_path"):
+                sc_path = res.get("screenshot_path")
+                if sc_path and Path(sc_path).exists():
+                    await callback.message.reply_photo(
+                        photo=FSInputFile(sc_path),
+                        caption="📸 **فرم پیشنهاد در سایت تکمیل و پیش‌نویس شد.**\nبرای ارسال نهایی، در مرورگر دکمه ثبت پیشنهاد را تایید نمایید."
+                    )
+                else:
+                    await callback.message.reply("✅ صفحه پروژه در مرورگر باز شد و اطلاعات پیش‌نویس گردید.")
+            else:
+                msg = res.get("message") or res.get("error") or "مرورگر در دسترس نیست."
+                await callback.message.reply(f"ℹ️ وضعیت پیش‌نویس: {msg}")
 
     @router.message(Command("github"))
     async def handle_github_cmd(message: Message):
@@ -947,11 +1070,15 @@ if HAS_AIOGRAM:
         active_str = f"`{active_proj['name']}` (`{active_proj['slug']}`)" if active_proj else "انتخاب نشده"
         active_ag = agent_manager.get_active_agent()
         active_pc_path = agent_manager.get_active_project_path() or "ثبت نشده"
+        r_health = freelance_radar.get_health_report()
+        r_ok = sum(1 for v in r_health.values() if v["status"] == "ok")
+        radar_status_str = f"🟢 فعال ({r_ok}/{len(r_health)} منبع متصل)"
 
         txt = (
             f"📊 **وضعیت سیستم Arush Agent (Self-Healing Watchdog):**\n\n"
             f"• **وضعیت کلی:** `{health['status'].upper()}` (Uptime: `{health['uptime_seconds']}s`)\n"
             f"• **9Router URL:** `{settings.NINEROUTER_URL}` ({status_9router})\n"
+            f"• **رادار فریلنسری:** {radar_status_str} (`/radar stats`)\n"
             f"• **ایجنت فعال:** `{active_ag['name']}` (`{active_ag['slug']}`)\n"
             f"• **مسیر پروژه روی PC:** `{active_pc_path}`\n"
             f"• **پروژه فعال در Vault:** {active_str}\n"

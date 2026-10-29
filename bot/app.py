@@ -6,7 +6,6 @@ try:
     from aiogram.client.session.aiohttp import AiohttpSession
     from aiogram.client.default import DefaultBotProperties
     from aiogram.enums import ParseMode
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     HAS_AIOGRAM = True
 except ImportError:
     HAS_AIOGRAM = False
@@ -18,6 +17,7 @@ from bot.formatter import send_formatted_message
 from core.scheduler import routine_scheduler
 from core.watchdog import watchdog
 from tools.freelance_radar import freelance_radar
+from tools.vault import vault
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("arush-agent")
@@ -61,20 +61,44 @@ async def start_bot():
 
     async def notify_high_match_lead(lead: dict) -> None:
         alert_txt = freelance_radar.format_telegram_alert(lead)
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🚀 ثبت فوری پیشنهاد در سایت", url=lead.get("url") or "https://ponisha.ir")]
-            ]
-        )
+        kb = freelance_radar.create_alert_keyboard(lead)
         for uid in settings.ALLOWED_TELEGRAM_USER_IDS:
             try:
                 await send_formatted_message(bot, chat_id=uid, text=alert_txt, reply_markup=kb)
             except Exception as e:
                 logger.warning(f"Failed to send radar alert to {uid}: {e}")
 
+        if lead.get("id"):
+            try:
+                vault.mark_lead_notified(int(lead["id"]))
+            except Exception as e:
+                logger.debug(f"Could not mark lead {lead.get('id')} notified: {e}")
+
+    async def notify_batch_match_leads(leads: list) -> None:
+        if not leads:
+            return
+        digest_txt = freelance_radar.format_batch_digest(leads)
+        for uid in settings.ALLOWED_TELEGRAM_USER_IDS:
+            try:
+                await send_formatted_message(bot, chat_id=uid, text=digest_txt)
+            except Exception as e:
+                logger.warning(f"Failed to send radar batch digest to {uid}: {e}")
+
+        for ld in leads:
+            if ld.get("id"):
+                try:
+                    vault.mark_lead_notified(int(ld["id"]))
+                except Exception:
+                    pass
+
     # Start background daemons (Phase 3 Radar Poller, Phase 6 Daily Routines, Phase 7 Health Server)
     await watchdog.start_health_server()
-    radar_task = asyncio.create_task(freelance_radar.start_background_poller(on_high_match=notify_high_match_lead))
+    radar_task = asyncio.create_task(
+        freelance_radar.start_background_poller(
+            on_high_match=notify_high_match_lead,
+            on_batch_match=notify_batch_match_leads
+        )
+    )
     scheduler_task = asyncio.create_task(routine_scheduler.run_loop(send_notification=notify_owners))
 
     logger.info("Bot and background daemons started. Entering self-healing polling loop...")

@@ -73,6 +73,15 @@ if HAS_PYDANTIC:
         RADAR_SYSTEM_ONE_BATCH_SIZE: int = 20
         RADAR_SYSTEM_ONE_THRESHOLD: float = 0.55
         RADAR_MIN_BUDGET_TOMAN: float = 1_000_000.0
+        RADAR_CONCURRENT_EVALS: int = 4
+        RADAR_ENABLE_GLOBAL_SOURCES: bool = True
+        RADAR_GLOBAL_RSS_FEEDS: Union[List[str], str] = [
+            "https://remoteok.com/remote-python-jobs.rss",
+            "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss"
+        ]
+        TELEGRAM_API_ID: Optional[int] = None
+        TELEGRAM_API_HASH: Optional[str] = None
+        TELEGRAM_SESSION_NAME: str = "arush_radar_session"
         RADAR_CATEGORIES: Union[List[str], str] = [
             "python", "react", "bot", "ai", "web scraping", "telegram", "fastapi", "django", "automation"
         ]
@@ -151,6 +160,18 @@ else:
             self.RADAR_SYSTEM_ONE_BATCH_SIZE = int(os.getenv("RADAR_SYSTEM_ONE_BATCH_SIZE", "20"))
             self.RADAR_SYSTEM_ONE_THRESHOLD = float(os.getenv("RADAR_SYSTEM_ONE_THRESHOLD", "0.55"))
             self.RADAR_MIN_BUDGET_TOMAN = float(os.getenv("RADAR_MIN_BUDGET_TOMAN", "1000000"))
+            self.RADAR_CONCURRENT_EVALS = int(os.getenv("RADAR_CONCURRENT_EVALS", "4"))
+            self.RADAR_ENABLE_GLOBAL_SOURCES = os.getenv("RADAR_ENABLE_GLOBAL_SOURCES", "true").lower() == "true"
+            self.RADAR_GLOBAL_RSS_FEEDS = _parse_str_list(
+                os.getenv("RADAR_GLOBAL_RSS_FEEDS"),
+                [
+                    "https://remoteok.com/remote-python-jobs.rss",
+                    "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss"
+                ]
+            )
+            self.TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID")) if os.getenv("TELEGRAM_API_ID") else None
+            self.TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH") or None
+            self.TELEGRAM_SESSION_NAME = os.getenv("TELEGRAM_SESSION_NAME", "arush_radar_session")
             self.RADAR_CATEGORIES = _parse_str_list(
                 os.getenv("RADAR_CATEGORIES"),
                 ["python", "react", "bot", "ai", "web scraping", "telegram", "fastapi", "django", "automation"]

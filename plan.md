@@ -73,18 +73,29 @@
 
 ---
 
-### Phase 3: Freelance Radar (Karlancer, Ponisha & Telegram) ✅ (COMPLETED)
+### Phase 3: Freelance Radar (Karlancer, Ponisha & Telegram) ✅ (COMPLETED & ENHANCED)
 *Goal: Automatically scan for freelance gigs, filter out spam, and generate winning proposals.*
 
 - [x] **3.1 Iranian Split-Network Client (`tools/freelance_radar.py`):**
   - `IranianSplitNetworkClient` (`trust_env=False`) explicitly bypasses system VPNs to connect directly to Iranian `.ir` domains (Karlancer and Ponisha).
 - [x] **3.2 Karlancer & Ponisha Project Feed Scraper:**
   - Periodic background poller (every 10 minutes) querying web/JSON/RSS feeds and filtering by categories (Python, React, Bot, AI, Web Scraping) and minimum budget.
-- [x] **3.3 Telegram Freelance Channel Monitor:**
-  - Monitors configured Telegram freelance channels via Telethon / public channel web feed parser.
+- [x] **3.3 Telegram Freelance Channel Monitor & Real-Time Stream:**
+  - Monitors configured Telegram freelance channels via public channel web feed parser and real-time Telethon MTProto event stream.
 - [x] **3.4 AI Lead Matchmaker & Proposal Generator:**
   - Evaluates new projects against Arush's portfolio profile.
   - Sends instant Telegram alerts for high-match leads (>80%) with project summary, employer rating, suggested bid/timeline, custom Persian proposal draft, and one-click inline button (`/radar`).
+- [x] **3.5 10 Radar System Upgrades Implemented:**
+  - **1. Deterministic Deduplication & Persian Budget Parser:** SHA-256 canonical hashing + parsing millions, ranges, unformatted numbers, and USD/Rial conversions.
+  - **2. Real-Time Telethon Client:** Event-driven MTProto stream listener for instantaneous lead detection.
+  - **3. Async Concurrent LLM Pipeline:** `asyncio.Semaphore(4)` with `asyncio.gather` for high-throughput System 2 proposal synthesis.
+  - **4. Global Remote Feeds:** Ingestion of USD remote developer feeds (RemoteOK, WeWorkRemotely, Upwork RSS).
+  - **5. Context-Aware Proposals:** System 2 injects verified active skills from `skills_manager` and completed Vault project proof.
+  - **6. Lead CRM Pipeline & Action Buttons:** Rich inline buttons (`📋 کپی`, `📁 تبدیل به پروژه`, `🔄 بازنویسی`, `❌ رد کردن`, `🌐 پیش‌نویس مرورگر`).
+  - **7. 1-Click Browser Bidding Preparation:** Uses `browser_agent` to pre-fill proposal forms and capture verification screenshots.
+  - **8. Active Feedback Loop:** Dynamic negative feedback prompt tuning from user-rejected leads.
+  - **9. Smart Tiered Alerting:** Platinum vs Standard tiers, anti-spam batch digest messages, and proper `notified` database synchronization.
+  - **10. Radar Observability & Diagnostics:** Structured source health monitoring, `/radar stats`, and `/status` diagnostic integration.
 
 ---
 

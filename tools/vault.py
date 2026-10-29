@@ -182,7 +182,7 @@ class ProjectVault:
             )
             """)
 
-            # 6. Freelance Leads (Phase 3)
+            # 6. Freelance Leads (Phase 3 & Enhanced CRM)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS freelance_leads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -204,15 +204,26 @@ class ProjectVault:
                 notified INTEGER DEFAULT 0,
                 system_one_is_job REAL DEFAULT 0.0,
                 system_one_stack_fit REAL DEFAULT 0.0,
+                status TEXT DEFAULT 'new',
+                user_feedback INTEGER DEFAULT 0,
+                rejection_reason TEXT DEFAULT '',
+                converted_project_id INTEGER DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """)
             existing_fl_cols = {
                 row["name"] for row in cursor.execute("PRAGMA table_info(freelance_leads)").fetchall()
             }
-            for col in ("system_one_is_job", "system_one_stack_fit"):
+            for col, col_type in (
+                ("system_one_is_job", "REAL DEFAULT 0.0"),
+                ("system_one_stack_fit", "REAL DEFAULT 0.0"),
+                ("status", "TEXT DEFAULT 'new'"),
+                ("user_feedback", "INTEGER DEFAULT 0"),
+                ("rejection_reason", "TEXT DEFAULT ''"),
+                ("converted_project_id", "INTEGER DEFAULT NULL"),
+            ):
                 if col not in existing_fl_cols:
-                    cursor.execute(f"ALTER TABLE freelance_leads ADD COLUMN {col} REAL DEFAULT 0.0")
+                    cursor.execute(f"ALTER TABLE freelance_leads ADD COLUMN {col} {col_type}")
             conn.commit()
 
     # ==========================================================
@@ -799,9 +810,9 @@ class ProjectVault:
                 external_id, platform, title, description, category,
                 budget_min, budget_max, currency, employer_name, employer_rating,
                 url, match_score, suggested_bid, suggested_timeline, proposal_draft, notified,
-                system_one_is_job, system_one_stack_fit
+                system_one_is_job, system_one_stack_fit, status, user_feedback, rejection_reason, converted_project_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 ext_id,
                 lead.get("platform", "unknown"),
@@ -820,13 +831,140 @@ class ProjectVault:
                 lead.get("proposal_draft", ""),
                 1 if lead.get("notified") else 0,
                 float(lead.get("system_one_is_job") or 0.0),
-                float(lead.get("system_one_stack_fit") or 0.0)
+                float(lead.get("system_one_stack_fit") or 0.0),
+                lead.get("status", "new"),
+                int(lead.get("user_feedback", 0)),
+                lead.get("rejection_reason", ""),
+                lead.get("converted_project_id")
             ))
             conn.commit()
             cursor.execute("SELECT * FROM freelance_leads WHERE id = ?", (cursor.lastrowid,))
             res = dict(cursor.fetchone())
             res["is_new"] = True
             return res
+
+    def get_lead_by_id(self, lead_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieves a freelance lead by its primary key ID."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM freelance_leads WHERE id = ?", (lead_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def mark_lead_notified(self, lead_id: int) -> bool:
+        """Marks a freelance lead as notified and transitions status to 'notified' if new."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE freelance_leads SET notified = 1, status = CASE WHEN status = 'new' THEN 'notified' ELSE status END WHERE id = ?",
+                (lead_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def update_lead_status(
+        self,
+        lead_id: int,
+        status: str,
+        feedback: Optional[int] = None,
+        rejection_reason: Optional[str] = None
+    ) -> bool:
+        """Updates the CRM lifecycle status and feedback for a lead."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            updates = ["status = ?"]
+            params: List[Any] = [status]
+            if feedback is not None:
+                updates.append("user_feedback = ?")
+                params.append(feedback)
+            if rejection_reason is not None:
+                updates.append("rejection_reason = ?")
+                params.append(rejection_reason)
+            params.append(lead_id)
+            cursor.execute(f"UPDATE freelance_leads SET {', '.join(updates)} WHERE id = ?", tuple(params))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def convert_lead_to_project(self, lead_id: int) -> Dict[str, Any]:
+        """Converts an opportunity lead directly into a tracked project workspace."""
+        lead = self.get_lead_by_id(lead_id)
+        if not lead:
+            raise ValueError(f"Freelance lead with id {lead_id} not found")
+
+        b_max = float(lead.get("budget_max") or lead.get("budget_min") or 0.0)
+        budget_str = f"{b_max:,.0f} {lead.get('currency', 'Toman')}" if b_max > 0 else "negotiable"
+        specs = {
+            "source_lead_id": lead_id,
+            "external_id": lead.get("external_id"),
+            "url": lead.get("url"),
+            "suggested_bid": lead.get("suggested_bid"),
+            "suggested_timeline": lead.get("suggested_timeline"),
+            "proposal_draft": lead.get("proposal_draft"),
+            "original_description": lead.get("description", "")
+        }
+        proj = self.create_or_get_project(
+            name=lead["title"][:50],
+            client=lead.get("employer_name") or lead.get("platform", "direct"),
+            platform=lead.get("platform", "direct"),
+            budget=budget_str,
+            deadline=lead.get("suggested_timeline", ""),
+            specs=specs
+        )
+        self.update_lead_status(lead_id, status="converted", feedback=1)
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE freelance_leads SET converted_project_id = ? WHERE id = ?", (proj["id"], lead_id))
+            conn.commit()
+
+        self.save_artifact(
+            artifact_type="proposal",
+            title="initial_freelance_proposal.md",
+            content=(
+                f"# Proposal for {lead['title']}\n\n"
+                f"**Client:** {lead.get('employer_name')}\n"
+                f"**Platform:** {lead.get('platform')}\n"
+                f"**URL:** {lead.get('url')}\n"
+                f"**Suggested Bid:** {lead.get('suggested_bid')}\n"
+                f"**Timeline:** {lead.get('suggested_timeline')}\n\n"
+                f"## Proposal Text\n\n{lead.get('proposal_draft')}\n\n"
+                f"## Original Project Description\n\n{lead.get('description')}\n"
+            ),
+            project_slug=proj["slug"]
+        )
+        return {"project": proj, "lead": lead}
+
+    def get_recent_rejected_leads(self, limit: int = 15) -> List[Dict[str, Any]]:
+        """Retrieves recently rejected leads to train active negative feedback filters."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM freelance_leads WHERE status = 'rejected' OR user_feedback = -1 ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_radar_stats(self) -> Dict[str, Any]:
+        """Calculates analytical and pipeline performance metrics for the Radar."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            total = cursor.execute("SELECT COUNT(*) FROM freelance_leads").fetchone()[0]
+            high_match = cursor.execute("SELECT COUNT(*) FROM freelance_leads WHERE match_score >= 80").fetchone()[0]
+            notified = cursor.execute("SELECT COUNT(*) FROM freelance_leads WHERE notified = 1").fetchone()[0]
+            converted = cursor.execute("SELECT COUNT(*) FROM freelance_leads WHERE status = 'converted'").fetchone()[0]
+            applied = cursor.execute("SELECT COUNT(*) FROM freelance_leads WHERE status = 'applied'").fetchone()[0]
+            rejected = cursor.execute("SELECT COUNT(*) FROM freelance_leads WHERE status = 'rejected' OR user_feedback = -1").fetchone()[0]
+            by_platform = {}
+            for r in cursor.execute("SELECT platform, COUNT(*) as c FROM freelance_leads GROUP BY platform").fetchall():
+                by_platform[r["platform"]] = r["c"]
+            return {
+                "total_leads": total,
+                "high_match_leads": high_match,
+                "notified_leads": notified,
+                "converted_projects": converted,
+                "applied_leads": applied,
+                "rejected_leads": rejected,
+                "by_platform": by_platform
+            }
 
     def get_top_freelance_leads(self, min_score: int = 0, limit: int = 10) -> List[Dict[str, Any]]:
         with self._get_conn() as conn:

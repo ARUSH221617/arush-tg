@@ -258,7 +258,7 @@ class ClaudeManagerAgent:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "mode": {"type": "string", "enum": ["poll_live", "top_leads", "evaluate_custom"], "default": "top_leads"},
+                            "mode": {"type": "string", "enum": ["poll_live", "top_leads", "evaluate_custom", "stats"], "default": "top_leads"},
                             "title": {"type": "string"},
                             "description": {"type": "string"},
                             "budget_max": {"type": "number"}
@@ -696,11 +696,18 @@ class ClaudeManagerAgent:
             if mode == "poll_live":
                 alerts = await freelance_radar.poll_sources_once()
                 return {"new_high_match_leads": alerts}
+            elif mode == "stats":
+                return {
+                    "radar_stats": vault.get_radar_stats(),
+                    "source_health": freelance_radar.get_health_report()
+                }
             elif mode == "evaluate_custom":
+                from tools.freelance_radar import compute_deterministic_lead_id
+                title = tool_input.get("title", "Custom Project")
                 lead = await freelance_radar.process_custom_lead({
-                    "external_id": f"custom_{hash(tool_input.get('title', ''))}",
+                    "external_id": compute_deterministic_lead_id("manual", title),
                     "platform": "manual",
-                    "title": tool_input.get("title", "Custom Project"),
+                    "title": title,
                     "description": tool_input.get("description", ""),
                     "budget_max": float(tool_input.get("budget_max") or 10_000_000)
                 })
