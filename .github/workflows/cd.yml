@@ -21,7 +21,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push-ghcr:
@@ -32,6 +31,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Lowercase repository name for Docker image
+        run: |
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -66,10 +69,13 @@ jobs:
   deploy-ssh-docker:
     name: Rollout via SSH & Docker Compose
     needs: build-and-push-ghcr
-    if: ${{ github.event.inputs.deploy_target == 'ssh-docker' && secrets.DEPLOY_SSH_HOST != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_target == 'ssh-docker' }}
     runs-on: ubuntu-latest
     steps:
       - name: Deploy container & verify /health endpoint
+        if: ${{ env.DEPLOY_SSH_HOST != '' }}
+        env:
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
         uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ secrets.DEPLOY_SSH_HOST }}
@@ -88,7 +94,7 @@ jobs:
   deploy-windows-host:
     name: Deploy to Windows Self-Hosted Runner (NSSM Service)
     needs: build-and-push-ghcr
-    if: ${{ github.event.inputs.deploy_target == 'windows-self-hosted' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_target == 'windows-self-hosted' }}
     runs-on: [self-hosted, windows]
     steps:
       - name: Checkout latest main branch
