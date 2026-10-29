@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from typing import List, Tuple, Optional
 
 try:
@@ -8,18 +9,31 @@ try:
 except ImportError:
     HAS_AIOGRAM = False
     Bot = object  # type: ignore
-    BotCommand = object  # type: ignore
-    BotCommandScopeDefault = object  # type: ignore
+
+    @dataclass
+    class BotCommand:  # type: ignore
+        command: str
+        description: str
+
+    @dataclass
+    class BotCommandScopeDefault:  # type: ignore
+        type: str = "default"
 
 logger = logging.getLogger("arush-agent.commands")
 
-# Standard Slash Commands for Arush Manager Agent (Phases 1–7)
+# Standard Slash Commands for Arush Manager Agent (Phases 1–8)
 # Format: (command_name, fa_description, en_description)
 # All command names comply with Telegram API constraints (^[a-z0-9_]{1,32}$)
 # All descriptions comply with length constraints (1–256 chars)
 COMMANDS_METADATA: List[Tuple[str, str, str]] = [
     ("start", "شروع و معرفی قابلیت‌های ربات", "Start agent & show overview"),
     ("help", "راهنمای کامل دستورات و میانبرها", "Command guide & usage examples"),
+    ("agents", "مدیریت و سوییچ ایجنت‌ها (برنامه‌نویس، طراح و...)", "Switch, create or manage AI agents"),
+    ("workspace", "ثبت و مدیریت مسیر پروژه روی کامپیوتر (Claude Code)", "Save & switch local PC project path"),
+    ("subagent", "اجرای ساب‌ایجنت تخصصی روی پروژه", "Spawn autonomous sub-agent on task"),
+    ("cli", "مدیریت ایجنت‌های نصبی (Claude Code, Antigravity, Codex, Copilot)", "Run/manage PC CLI agents (Claude, Codex, etc.)"),
+    ("skills", "مدیریت، ساخت و فعال‌سازی مهارت‌ها (Skills)", "List, create, toggle & manage Skills"),
+    ("mcp", "مدیریت سرورها و ابزارهای MCP", "Configure & call MCP servers and tools"),
     ("project", "ساخت، سوییچ یا مشاهده خلاصه پروژه", "Create, switch or inspect project"),
     ("projects", "لیست تمام پروژه‌های ثبت‌شده", "List all tracked projects in Vault"),
     ("finance", "گزارش مالی هفتگی/ماهانه و دفتر کل", "Weekly/monthly financial ledger"),
@@ -41,11 +55,9 @@ COMMANDS_METADATA: List[Tuple[str, str, str]] = [
 
 def get_bot_commands(language_code: Optional[str] = None):
     """
-    Returns a list of aiogram.types.BotCommand objects for the given language.
+    Returns a list of BotCommand objects for the given language.
     Defaults to Persian (fa) if language_code is None or 'fa', otherwise English (en).
     """
-    if not HAS_AIOGRAM:
-        return []
     is_en = language_code == "en"
     return [
         BotCommand(command=cmd, description=en_desc if is_en else fa_desc)
@@ -60,8 +72,8 @@ async def setup_bot_commands(bot: Bot) -> bool:
     2. Persian language scope (language_code="fa")
     3. English language scope (language_code="en")
     """
-    if not HAS_AIOGRAM:
-        logger.warning("aiogram is not available; skipping slash command registration.")
+    if not hasattr(bot, "set_my_commands"):
+        logger.warning("bot instance does not support set_my_commands; skipping slash command registration.")
         return False
 
     success = False
@@ -89,4 +101,3 @@ async def setup_bot_commands(bot: Bot) -> bool:
         logger.debug(f"Optional 'en' command scope registration note: {e}")
 
     return success
-

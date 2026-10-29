@@ -192,7 +192,7 @@ def ensure_data_directories(base_dir: Optional[Path] = None) -> None:
         target = fallback
         target.mkdir(parents=True, exist_ok=True)
 
-    for sub in ("projects", "media", "receipts", "db", "backups", "downloads", "labs"):
+    for sub in ("projects", "media", "receipts", "db", "backups", "downloads", "labs", "skills"):
         (target / sub).mkdir(parents=True, exist_ok=True)
 
 
