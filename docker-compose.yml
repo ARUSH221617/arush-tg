@@ -1,0 +1,15 @@
+services:
+  arush-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arush-manager-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # To connect to host 9Router when running in Docker,
+    # set NINEROUTER_URL=http://host.docker.internal:20128 in your .env
