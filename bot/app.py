@@ -14,6 +14,7 @@ except ImportError:
 from config import settings
 from bot.handlers import router as main_router
 from bot.middlewares import WhitelistAuthMiddleware
+from bot.formatter import send_formatted_message
 from core.scheduler import routine_scheduler
 from core.watchdog import watchdog
 from tools.freelance_radar import freelance_radar
@@ -36,7 +37,7 @@ async def start_bot():
     bot = Bot(
         token=settings.TELEGRAM_BOT_TOKEN,
         session=session,
-        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
 
     dp = Dispatcher()
@@ -54,7 +55,7 @@ async def start_bot():
     async def notify_owners(text: str) -> None:
         for uid in settings.ALLOWED_TELEGRAM_USER_IDS:
             try:
-                await bot.send_message(chat_id=uid, text=text, parse_mode="Markdown")
+                await send_formatted_message(bot, chat_id=uid, text=text)
             except Exception as e:
                 logger.warning(f"Failed to send scheduled notification to {uid}: {e}")
 
@@ -67,7 +68,7 @@ async def start_bot():
         )
         for uid in settings.ALLOWED_TELEGRAM_USER_IDS:
             try:
-                await bot.send_message(chat_id=uid, text=alert_txt, reply_markup=kb, parse_mode="Markdown")
+                await send_formatted_message(bot, chat_id=uid, text=alert_txt, reply_markup=kb)
             except Exception as e:
                 logger.warning(f"Failed to send radar alert to {uid}: {e}")
 

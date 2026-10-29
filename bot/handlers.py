@@ -20,6 +20,7 @@ except ImportError:
     Router = object  # type: ignore
 
 from config import settings
+from bot.formatter import send_formatted_reply, markdown_to_telegram_html
 from core.agent import agent
 from core.router_client import router_client
 from core.scheduler import routine_scheduler
@@ -99,7 +100,8 @@ if HAS_AIOGRAM:
 
         for pending in list(agent.last_pending_confirmations):
             kb = _build_confirmation_kb(pending["action_id"])
-            await message.answer(
+            await send_formatted_reply(
+                message,
                 f"⚠️ **نیاز به تایید امنیتی:**\n`{pending['description']}`",
                 reply_markup=kb
             )
@@ -131,7 +133,7 @@ if HAS_AIOGRAM:
             f"• `/radar` — اسکن پروژه‌های فریلنسری + پروپوزال\n"
             f"• `/screenshot` ، `/github` ، `/imagine` ، `/bio` ، `/lab` ، `/status`"
         )
-        await message.answer(text, parse_mode="Markdown")
+        await send_formatted_reply(message, text)
 
     @router.message(Command("help", "commands", "menu"))
     async def handle_help_cmd(message: Message):
@@ -162,7 +164,7 @@ if HAS_AIOGRAM:
             "• `/screenshot` | `/github [status|prs|ci]` | `/imagine <prompt>`\n"
             "• `/bio <note>` | `/lab <text>` | `/briefing` | `/review` | `/backup` | `/status` | `/cancel`"
         )
-        await message.answer(text, parse_mode="Markdown")
+        await send_formatted_reply(message, text)
 
     # ==========================================================
     # Phase 8.1 Handlers: /agents, /workspace, /subagent, /cli
@@ -193,7 +195,7 @@ if HAS_AIOGRAM:
                 "• سوییچ: `/agents switch programmer D:\\my_project`\n"
                 "• ساخت ایجنت جدید: `/agents create نام | نقش | دستورالعمل سیستمی`"
             )
-            await message.answer("\n\n".join(lines), reply_markup=_build_agents_kb(), parse_mode="Markdown")
+            await send_formatted_reply(message, "\n\n".join(lines), reply_markup=_build_agents_kb())
             return
 
         sub = parts[1].lower().strip()
@@ -205,68 +207,68 @@ if HAS_AIOGRAM:
             proj_path = sub_parts[1] if len(sub_parts) > 1 else None
             res = agent_manager.switch_agent(target_slug, project_path=proj_path)
             if res.get("status") == "not_found":
-                await message.answer(f"❌ {res.get('error')}")
+                await send_formatted_reply(message, f"❌ {res.get('error')}")
                 return
             ag = res["agent"]
-            await message.answer(
+            await send_formatted_reply(
+                message,
                 f"✅ **ایجنت فعال تغییر کرد به:** `{ag['name']}` (`{ag['slug']}`)\n"
                 f"🎯 **نقش:** {ag.get('role_title')}\n"
-                f"💻 **مسیر پروژه فعال:** `{agent_manager.get_active_project_path() or 'پیش‌فرض'}`",
-                parse_mode="Markdown"
+                f"💻 **مسیر پروژه فعال:** `{agent_manager.get_active_project_path() or 'پیش‌فرض'}`"
             )
 
         elif sub in ("path", "set_path"):
             if not rest:
-                await message.answer("📂 لطفاً مسیر پوشه پروژه روی کامپیوتر را وارد کنید. مثال:\n`/agents path D:\\projects\\arush-app`", parse_mode="Markdown")
+                await send_formatted_reply(message, "📂 لطفاً مسیر پوشه پروژه روی کامپیوتر را وارد کنید. مثال:\n`/agents path D:\\projects\\arush-app`")
                 return
             res = agent_manager.set_project_path(rest, bind_to_active_agent=True)
             if res.get("status") == "error":
-                await message.answer(f"❌ {res['error']}")
+                await send_formatted_reply(message, f"❌ {res['error']}")
                 return
-            await message.answer(
+            await send_formatted_reply(
+                message,
                 f"✅ **مسیر پروژه روی PC ذخیره و به ایجنت فعال متصل شد:**\n"
                 f"• **مسیر:** `{res['local_path']}`\n"
                 f"• **استک تشخیص داده شده:** `{res['tech_stack']}`\n"
-                f"• **تعداد فایل‌ها:** `{res['file_count']}`",
-                parse_mode="Markdown"
+                f"• **تعداد فایل‌ها:** `{res['file_count']}`"
             )
 
         elif sub in ("create", "add"):
             segments = [s.strip() for s in rest.split("|")]
             if len(segments) < 2:
-                await message.answer(
-                    "📝 فرمت ساخت ایجنت جدید:\n`/agents create <name> | <role_title> | <system_prompt>`",
-                    parse_mode="Markdown"
+                await send_formatted_reply(
+                    message,
+                    "📝 فرمت ساخت ایجنت جدید:\n`/agents create <name> | <role_title> | <system_prompt>`"
                 )
                 return
             name = segments[0]
             role = segments[1] if len(segments) > 2 else "Custom Specialist Agent"
             sys_prompt = segments[2] if len(segments) > 2 else segments[1]
             ag = agent_manager.create_or_update_agent(name=name, role_title=role, system_prompt=sys_prompt, activate=True)
-            await message.answer(
-                f"✅ **ایجنت `{ag['name']}` (`{ag['slug']}`) ساخته و فعال شد!**\n🎯 نقش: `{ag['role_title']}`",
-                parse_mode="Markdown"
+            await send_formatted_reply(
+                message,
+                f"✅ **ایجنت `{ag['name']}` (`{ag['slug']}`) ساخته و فعال شد!**\n🎯 نقش: `{ag['role_title']}`"
             )
 
         elif sub in ("delete", "remove"):
             res = agent_manager.delete_agent(rest)
             if res.get("status") == "deleted":
-                await message.answer(f"🗑️ ایجنت `{res['slug']}` حذف شد.", parse_mode="Markdown")
+                await send_formatted_reply(message, f"🗑️ ایجنت `{res['slug']}` حذف شد.")
             else:
-                await message.answer(f"❌ {res.get('error')}", parse_mode="Markdown")
+                await send_formatted_reply(message, f"❌ {res.get('error')}")
 
         else:
             # Treat `/agents <slug>` directly as switching to that agent
             res = agent_manager.switch_agent(sub, project_path=rest or None)
             if res.get("status") == "switched":
                 ag = res["agent"]
-                await message.answer(
+                await send_formatted_reply(
+                    message,
                     f"✅ **ایجنت فعال تغییر کرد به:** `{ag['name']}` (`{ag['slug']}`)\n"
-                    f"💻 **مسیر پروژه:** `{agent_manager.get_active_project_path() or 'پیش‌فرض'}`",
-                    parse_mode="Markdown"
+                    f"💻 **مسیر پروژه:** `{agent_manager.get_active_project_path() or 'پیش‌فرض'}`"
                 )
             else:
-                await message.answer(f"❌ {res.get('error')}")
+                await send_formatted_reply(message, f"❌ {res.get('error')}")
 
     @router.callback_query(F.data.startswith("switch_agent:"))
     async def handle_switch_agent_callback(callback: CallbackQuery):
@@ -281,11 +283,11 @@ if HAS_AIOGRAM:
             await callback.message.edit_reply_markup(reply_markup=_build_agents_kb())
         except Exception:
             pass
-        await callback.message.answer(
+        await send_formatted_reply(
+            callback.message,
             f"🤖 **ایجنت فعال تغییر کرد به:** `{ag['name']}` (`{ag['slug']}`)\n"
             f"🎯 _{ag.get('role_title', '')}_\n"
-            f"💻 مسیر پروژه روی PC: `{agent_manager.get_active_project_path() or 'ثبت نشده'}`",
-            parse_mode="Markdown"
+            f"💻 مسیر پروژه روی PC: `{agent_manager.get_active_project_path() or 'ثبت نشده'}`"
         )
 
     @router.message(Command("workspace", "path", "code"))
@@ -308,37 +310,37 @@ if HAS_AIOGRAM:
                 "• ثبت یا تغییر مسیر پروژه روی PC:\n  `/workspace D:\\projects\\my_app`\n"
                 "• مشاهده درخت فایل‌های پروژه:\n  `/workspace tree`"
             )
-            await message.answer("\n".join(lines), parse_mode="Markdown")
+            await send_formatted_reply(message, "\n".join(lines))
             return
 
         arg = parts[1].strip()
         if arg.lower() == "tree":
             tree_res = agent_manager.inspect_tree()
             if tree_res.get("status") == "error":
-                await message.answer(f"❌ {tree_res['error']}")
+                await send_formatted_reply(message, f"❌ {tree_res['error']}")
                 return
-            await message.answer(
+            await send_formatted_reply(
+                message,
                 f"📂 **ساختار درختی پروژه (`{tree_res['project_path']}`):**\n"
                 f"فایل‌ها: `{tree_res['total_files']}` | پوشه‌ها: `{tree_res['total_dirs']}`\n"
-                f"```\n{tree_res['tree'][:3200]}\n```",
-                parse_mode="Markdown"
+                f"```\n{tree_res['tree'][:3200]}\n```"
             )
             return
 
         res = agent_manager.set_project_path(arg, create_if_missing=False, bind_to_active_agent=True)
         if res.get("status") == "error":
-            await message.answer(f"❌ {res['error']}")
+            await send_formatted_reply(message, f"❌ {res['error']}")
             return
 
-        await message.answer(
+        await send_formatted_reply(
+            message,
             f"✅ **مسیر پروژه روی کامپیوتر ذخیره و فعال شد!**\n\n"
             f"• **نام:** `{res['name']}` (`{res['slug']}`)\n"
             f"• **مسیر لوکال:** `{res['local_path']}`\n"
             f"• **استک پروژه:** `{res['tech_stack']}`\n"
             f"• **تعداد فایل‌ها:** `{res['file_count']}`\n\n"
             f"🌳 **پیش‌نمایش ساختار فایل‌ها:**\n```\n{res['tree_preview'][:1200]}\n```\n"
-            f"حالا می‌توانید مستقیماً در چت بگویید چه فایلی را بخوانم، ویرایش کنم، بسازم یا تست بگیرم (مشابه Claude Code)!",
-            parse_mode="Markdown"
+            f"حالا می‌توانید مستقیماً در چت بگویید چه فایلی را بخوانم، ویرایش کنم، بسازم یا تست بگیرم (مشابه Claude Code)!"
         )
 
     @router.message(Command("subagent"))
@@ -358,7 +360,7 @@ if HAS_AIOGRAM:
                 lines.append("📜 **آخرین ساب‌ایجنت‌های اجرا شده:**")
                 for r in runs:
                     lines.append(f"• `[{r['run_type']}]` **{r['agent_slug']}** ({r['status']}): _{r['task'][:80]}_")
-            await message.answer("\n".join(lines), parse_mode="Markdown")
+            await send_formatted_reply(message, "\n".join(lines))
             return
 
         known_slugs = {a["slug"] for a in agent_manager.list_agents()}
@@ -376,7 +378,7 @@ if HAS_AIOGRAM:
         await status_msg.delete()
 
         if res.get("status") == "error":
-            await message.answer(f"❌ خطا در اجرای ساب‌ایجنت `{role_slug}`:\n`{res.get('error')}`", parse_mode="Markdown")
+            await send_formatted_reply(message, f"❌ خطا در اجرای ساب‌ایجنت `{role_slug}`:\n`{res.get('error')}`")
             return
 
         out_text = (
@@ -384,10 +386,7 @@ if HAS_AIOGRAM:
             f"📂 پروژه: `{res.get('project_path') or 'default'}`\n\n"
             f"{res.get('output', '')}"
         )
-        try:
-            await message.answer(out_text[:4000], parse_mode="Markdown")
-        except Exception:
-            await message.answer(out_text[:4000], parse_mode=None)
+        await send_formatted_reply(message, out_text)
 
     @router.message(Command("cli"))
     async def handle_cli_cmd(message: Message):
@@ -420,7 +419,7 @@ if HAS_AIOGRAM:
                 "• افزودن ایجنت CLI جدید:\n"
                 "  `/cli add aider | aider | --message {prompt} --yes`"
             )
-            await message.answer("\n\n".join(lines), parse_mode="Markdown")
+            await send_formatted_reply(message, "\n\n".join(lines))
             return
 
         sub = parts[1].lower().strip()
@@ -435,12 +434,12 @@ if HAS_AIOGRAM:
                 badge = "🟢 نصب‌شده" if c["installed"] else "🔴 یافت نشد در PATH"
                 path_info = f"\n  مسیر: `{c['detected_path']}`\n  نسخه: `{c['version']}`" if c["installed"] else f"\n  باینری مورد انتظار: `{c['binary']}`"
                 lines.append(f"• **{c['name']}** (`{c['slug']}`): {badge}{path_info}")
-            await message.answer("\n\n".join(lines), parse_mode="Markdown")
+            await send_formatted_reply(message, "\n\n".join(lines))
 
         elif sub == "run":
             run_parts = rest.split(maxsplit=1)
             if len(run_parts) < 2:
-                await message.answer("⚠️ فرمت صحیح: `/cli run <agent_slug> <prompt>`\nمثال: `/cli run claude_code Fix bug in main.py`", parse_mode="Markdown")
+                await send_formatted_reply(message, "⚠️ فرمت صحیح: `/cli run <agent_slug> <prompt>`\nمثال: `/cli run claude_code Fix bug in main.py`")
                 return
             cli_slug, prompt_txt = run_parts[0], run_parts[1]
             status_msg = await message.answer(
@@ -449,7 +448,7 @@ if HAS_AIOGRAM:
             res = await agent_manager.run_external_cli_agent(agent_name=cli_slug, prompt=prompt_txt)
             await status_msg.delete()
             if res.get("status") in ("not_found", "not_installed", "error", "disabled", "timeout"):
-                await message.answer(f"❌ **{res.get('status')}:**\n{res.get('error')}", parse_mode="Markdown")
+                await send_formatted_reply(message, f"❌ **{res.get('status')}:**\n{res.get('error')}")
                 return
             output = res.get("stdout") or res.get("stderr") or "(بدون خروجی متنی)"
             reply_txt = (
@@ -457,12 +456,12 @@ if HAS_AIOGRAM:
                 f"📂 مسیر: `{res.get('cwd')}`\n"
                 f"```\n{output[:3400]}\n```"
             )
-            await message.answer(reply_txt, parse_mode="Markdown")
+            await send_formatted_reply(message, reply_txt)
 
         elif sub == "set_binary":
             b_parts = rest.split(maxsplit=1)
             if len(b_parts) < 2:
-                await message.answer("⚠️ فرمت صحیح: `/cli set_binary <agent_slug> <full_binary_path>`", parse_mode="Markdown")
+                await send_formatted_reply(message, "⚠️ فرمت صحیح: `/cli set_binary <agent_slug> <full_binary_path>`")
                 return
             slug_name, bin_path = b_parts[0], b_parts[1].strip("'\"")
             existing = agent_manager.get_cli_agent(slug_name)
@@ -470,33 +469,33 @@ if HAS_AIOGRAM:
                 name=existing["name"] if existing else slug_name,
                 binary=bin_path,
             )
-            await message.answer(
-                f"✅ مسیر فایل اجرایی برای `{updated['slug']}` تنظیم شد به:\n`{updated['binary']}`",
-                parse_mode="Markdown"
+            await send_formatted_reply(
+                message,
+                f"✅ مسیر فایل اجرایی برای `{updated['slug']}` تنظیم شد به:\n`{updated['binary']}`"
             )
 
         elif sub in ("add", "register"):
             segs = [s.strip() for s in rest.split("|")]
             if len(segs) < 2:
-                await message.answer("⚠️ فرمت صحیح: `/cli add <name> | <binary> | [args_template]`", parse_mode="Markdown")
+                await send_formatted_reply(message, "⚠️ فرمت صحیح: `/cli add <name> | <binary> | [args_template]`")
                 return
             name = segs[0]
             binary = segs[1]
             args_tmpl = segs[2].split() if len(segs) > 2 and segs[2] else ["-p", "{prompt}"]
             created = agent_manager.register_or_update_cli_agent(name=name, binary=binary, args_template=args_tmpl)
-            await message.answer(
-                f"✅ ایجنت CLI `{created['name']}` (`{created['slug']}`) با دستور `{created['binary']}` ثبت شد!",
-                parse_mode="Markdown"
+            await send_formatted_reply(
+                message,
+                f"✅ ایجنت CLI `{created['name']}` (`{created['slug']}`) با دستور `{created['binary']}` ثبت شد!"
             )
 
         else:
             # Allow shorthand `/cli claude_code <prompt>`
             res = await agent_manager.run_external_cli_agent(agent_name=sub, prompt=rest)
             if res.get("status") in ("not_found", "not_installed", "error", "disabled", "timeout"):
-                await message.answer(f"❌ {res.get('error')}")
+                await send_formatted_reply(message, f"❌ {res.get('error')}")
             else:
                 output = res.get("stdout") or res.get("stderr") or "(Done)"
-                await message.answer(f"✅ **خروجی `{res.get('name', sub)}`:**\n```\n{output[:3400]}\n```", parse_mode="Markdown")
+                await send_formatted_reply(message, f"✅ **خروجی `{res.get('name', sub)}`:**\n```\n{output[:3400]}\n```")
 
     # ==========================================================
     # Phase 8.2 Handlers: /skills
@@ -521,7 +520,7 @@ if HAS_AIOGRAM:
                 "• ساخت مهارت جدید: `/skills add <name> | <triggers> | <instructions>`\n"
                 "• تغییر وضعیت: روی دکمه‌های زیر کلیک کنید یا `/skills toggle <slug>`"
             )
-            await message.answer("\n\n".join(lines), reply_markup=_build_skills_kb(), parse_mode="Markdown")
+            await send_formatted_reply(message, "\n\n".join(lines), reply_markup=_build_skills_kb())
             return
 
         sub = parts[1].lower().strip()
@@ -530,47 +529,47 @@ if HAS_AIOGRAM:
         if sub in ("view", "get", "show"):
             sk = skills_manager.get_skill(rest)
             if not sk:
-                await message.answer(f"❌ مهارت `{rest}` یافت نشد.", parse_mode="Markdown")
+                await send_formatted_reply(message, f"❌ مهارت `{rest}` یافت نشد.")
                 return
-            await message.answer(
+            await send_formatted_reply(
+                message,
                 f"🧩 **مهارت: {sk['name']} (`{sk['slug']}`)**\n"
                 f"📂 فایل: `{sk.get('file_path', '')}`\n\n"
-                f"{sk['content'][:3500]}",
-                parse_mode="Markdown"
+                f"{sk['content'][:3500]}"
             )
 
         elif sub in ("add", "create"):
             segs = [s.strip() for s in rest.split("|")]
             if len(segs) < 2:
-                await message.answer(
-                    "⚠️ فرمت ساخت مهارت:\n`/skills add <name> | <triggers> | <markdown_instructions>`",
-                    parse_mode="Markdown"
+                await send_formatted_reply(
+                    message,
+                    "⚠️ فرمت ساخت مهارت:\n`/skills add <name> | <triggers> | <markdown_instructions>`"
                 )
                 return
             name = segs[0]
             triggers = segs[1] if len(segs) > 2 else ""
             content = segs[2] if len(segs) > 2 else segs[1]
             sk = skills_manager.create_or_update_skill(name=name, triggers=triggers, content=content)
-            await message.answer(
-                f"✅ مهارت **{sk['name']}** (`{sk['slug']}`) ذخیره و در `{sk['file_path']}` ثبت شد!",
-                parse_mode="Markdown"
+            await send_formatted_reply(
+                message,
+                f"✅ مهارت **{sk['name']}** (`{sk['slug']}`) ذخیره و در `{sk['file_path']}` ثبت شد!"
             )
 
         elif sub == "toggle":
             sk = skills_manager.get_skill(rest)
             if not sk:
-                await message.answer(f"❌ مهارت `{rest}` یافت نشد.", parse_mode="Markdown")
+                await send_formatted_reply(message, f"❌ مهارت `{rest}` یافت نشد.")
                 return
             updated = skills_manager.toggle_skill(rest, enabled=not bool(sk.get("enabled")))
             state_str = "🟢 فعال" if updated["skill"]["enabled"] else "⚪ غیرفعال"
-            await message.answer(f"✅ وضعیت مهارت `{rest}` تغییر کرد به: **{state_str}**", parse_mode="Markdown")
+            await send_formatted_reply(message, f"✅ وضعیت مهارت `{rest}` تغییر کرد به: **{state_str}**")
 
         elif sub in ("delete", "remove"):
             res = skills_manager.delete_skill(rest)
             if res.get("status") == "deleted":
-                await message.answer(f"🗑️ مهارت `{res['slug']}` حذف شد.", parse_mode="Markdown")
+                await send_formatted_reply(message, f"🗑️ مهارت `{res['slug']}` حذف شد.")
             else:
-                await message.answer(f"❌ {res.get('error')}")
+                await send_formatted_reply(message, f"❌ {res.get('error')}")
 
     @router.callback_query(F.data.startswith("toggle_skill:"))
     async def handle_toggle_skill_callback(callback: CallbackQuery):
@@ -619,7 +618,7 @@ if HAS_AIOGRAM:
                 "• کشف و اتصال ابزارهای سرور (`tools/list`):\n  `/mcp discover <server_name>`\n"
                 "• حذف سرور:\n  `/mcp remove <server_name>`"
             )
-            await message.answer("\n\n".join(lines), parse_mode="Markdown")
+            await send_formatted_reply(message, "\n\n".join(lines))
             return
 
         sub = parts[1].lower().strip()
@@ -631,23 +630,23 @@ if HAS_AIOGRAM:
             target_path = p_parts[1] if len(p_parts) > 1 else agent_manager.get_active_project_path()
             res = mcp_manager.add_preset_server(preset_name=preset_name, target_path=target_path)
             if res.get("status") == "error":
-                await message.answer(f"❌ {res['error']}")
+                await send_formatted_reply(message, f"❌ {res['error']}")
                 return
-            await message.answer(
+            await send_formatted_reply(
+                message,
                 f"✅ **سرور MCP پریست `{res['name']}` (`{res['slug']}`) ثبت شد!**\n"
                 f"• دستور: `{res['command']} {' '.join(res['args'])}`\n"
-                f"برای استخراج ابزارها بزنید: `/mcp discover {res['slug']}`",
-                parse_mode="Markdown"
+                f"برای استخراج ابزارها بزنید: `/mcp discover {res['slug']}`"
             )
 
         elif sub == "add":
             segs = [s.strip() for s in rest.split("|")]
             if len(segs) < 2:
-                await message.answer(
+                await send_formatted_reply(
+                    message,
                     "⚠️ فرمت افزودن سرور MCP:\n"
                     "• Stdio: `/mcp add <name> | <command> | <space_separated_args>`\n"
-                    "• HTTP: `/mcp add <name> | http://localhost:8080/mcp`",
-                    parse_mode="Markdown"
+                    "• HTTP: `/mcp add <name> | http://localhost:8080/mcp`"
                 )
                 return
             name = segs[0]
@@ -657,51 +656,51 @@ if HAS_AIOGRAM:
                 srv = mcp_manager.add_or_update_server(name=name, transport="http", url=cmd_or_url)
             else:
                 srv = mcp_manager.add_or_update_server(name=name, transport="stdio", command=cmd_or_url, args=args)
-            await message.answer(
-                f"✅ سرور MCP **{srv['name']}** (`{srv['slug']}`) با موفقیت ثبت شد!",
-                parse_mode="Markdown"
+            await send_formatted_reply(
+                message,
+                f"✅ سرور MCP **{srv['name']}** (`{srv['slug']}`) با موفقیت ثبت شد!"
             )
 
         elif sub == "import":
             res = mcp_manager.import_mcp_json(rest)
             if res.get("status") == "error":
-                await message.answer(f"❌ خطا در ایمپورت JSON:\n`{res['error']}`", parse_mode="Markdown")
+                await send_formatted_reply(message, f"❌ خطا در ایمپورت JSON:\n`{res['error']}`")
                 return
-            await message.answer(
-                f"✅ تعداد `{res['count']}` سرور MCP از کانفیگ JSON ایمپورت شد:\n`{', '.join(res['imported_servers'])}`",
-                parse_mode="Markdown"
+            await send_formatted_reply(
+                message,
+                f"✅ تعداد `{res['count']}` سرور MCP از کانفیگ JSON ایمپورت شد:\n`{', '.join(res['imported_servers'])}`"
             )
 
         elif sub == "discover":
             if not rest:
-                await message.answer("⚠️ نام سرور MCP را وارد کنید: `/mcp discover <server_name>`", parse_mode="Markdown")
+                await send_formatted_reply(message, "⚠️ نام سرور MCP را وارد کنید: `/mcp discover <server_name>`")
                 return
             status_msg = await message.answer(f"🔌 در حال اتصال به سرور MCP `{rest}` و دریافت لیست ابزارها...")
             res = await mcp_manager.discover_server_tools(rest)
             await status_msg.delete()
             if res.get("status") != "connected":
-                await message.answer(f"❌ خطا در اتصال به `{rest}`:\n`{res.get('error')}`", parse_mode="Markdown")
+                await send_formatted_reply(message, f"❌ خطا در اتصال به `{rest}`:\n`{res.get('error')}`")
                 return
             tool_names = [t.get("name", "") for t in res.get("tools", [])]
-            await message.answer(
+            await send_formatted_reply(
+                message,
                 f"✅ **اتصال به `{res['server']}` برقرار شد!**\n"
                 f"🔧 تعداد ابزارهای کشف‌شده: `{res['tools_count']}`\n"
                 f"ابزارها: `{', '.join(tool_names) or 'بدون ابزار'}`\n\n"
-                f"این ابزارها اکنون به صورت خودکار در دسترس ایجنت اصلی و ساب‌ایجنت‌ها هستند.",
-                parse_mode="Markdown"
+                f"این ابزارها اکنون به صورت خودکار در دسترس ایجنت اصلی و ساب‌ایجنت‌ها هستند."
             )
 
         elif sub in ("remove", "delete"):
             res = mcp_manager.remove_server(rest)
             if res.get("status") == "deleted":
-                await message.answer(f"🗑️ سرور MCP `{res['slug']}` حذف شد.", parse_mode="Markdown")
+                await send_formatted_reply(message, f"🗑️ سرور MCP `{res['slug']}` حذف شد.")
             else:
-                await message.answer(f"❌ {res.get('error')}")
+                await send_formatted_reply(message, f"❌ {res.get('error')}")
 
         elif sub == "call":
             c_parts = rest.split(maxsplit=2)
             if len(c_parts) < 2:
-                await message.answer("⚠️ فرمت: `/mcp call <server> <tool_name> [json_args]`", parse_mode="Markdown")
+                await send_formatted_reply(message, "⚠️ فرمت: `/mcp call <server> <tool_name> [json_args]`")
                 return
             srv_name, t_name = c_parts[0], c_parts[1]
             args_dict = {}
@@ -711,9 +710,9 @@ if HAS_AIOGRAM:
                 except Exception:
                     args_dict = {}
             res = await mcp_manager.call_tool(srv_name, t_name, arguments=args_dict)
-            await message.answer(
-                f"🔌 **نتیجه فراخوانی MCP (`{srv_name}.{t_name}`):**\n```json\n{json.dumps(res, ensure_ascii=False, indent=2)[:3500]}\n```",
-                parse_mode="Markdown"
+            await send_formatted_reply(
+                message,
+                f"🔌 **نتیجه فراخوانی MCP (`{srv_name}.{t_name}`):**\n```json\n{json.dumps(res, ensure_ascii=False, indent=2)[:3500]}\n```"
             )
 
     # ==========================================================
@@ -727,7 +726,7 @@ if HAS_AIOGRAM:
         msg = "🔄 **عملیات لغو شد.** حافظه موقت و اقدامات در انتظار پاکسازی شدند."
         if canceled > 0:
             msg += f"\n• `{canceled}` اقدام امنیتی در حال انتظار لغو شد."
-        await message.answer(msg, parse_mode="Markdown")
+        await send_formatted_reply(message, msg)
 
     @router.message(Command("screenshot"))
     async def handle_screenshot_cmd(message: Message):
@@ -751,7 +750,7 @@ if HAS_AIOGRAM:
             vault.switch_active_project(arg)
         summary = vault.get_project_summary(arg)
         if not summary:
-            await message.answer("📁 پروژه‌ای انتخاب نشده است. مثال: `/project crypto_bot`", parse_mode="Markdown")
+            await send_formatted_reply(message, "📁 پروژه‌ای انتخاب نشده است. مثال: `/project crypto_bot`")
             return
         p = summary["project"]
         txt = (
@@ -762,13 +761,13 @@ if HAS_AIOGRAM:
             f"• **درآمد ثبت شده:** `{summary['income_total']:,.0f}` تومان | **هزینه:** `{summary['expense_total']:,.0f}` تومان\n\n"
             f"📝 **پیش‌نمایش `context.md`:**\n```\n{summary['context_preview'][:500]}\n```"
         )
-        await message.answer(txt, parse_mode="Markdown")
+        await send_formatted_reply(message, txt)
 
     @router.message(Command("projects"))
     async def handle_projects_cmd(message: Message):
         projs = vault.list_projects()
         if not projs:
-            await message.answer("📁 هیچ پروژه‌ای هنوز ثبت نشده است. با `/project <name>` بسازید.")
+            await send_formatted_reply(message, "📁 هیچ پروژه‌ای هنوز ثبت نشده است. با `/project <name>` بسازید.")
             return
         lines = ["📁 **پروژه‌های ثبت شده در Knowledge Vault:**\n"]
         for p in projs:
@@ -777,7 +776,7 @@ if HAS_AIOGRAM:
             lines.append(
                 f"{status_emoji} {active_star}**{p['name']}** (`{p['slug']}`) | پلتفرم: {p['platform']} | وضعیت: {p['status']}"
             )
-        await message.answer("\n".join(lines), parse_mode="Markdown")
+        await send_formatted_reply(message, "\n".join(lines))
 
     @router.message(Command("finance"))
     async def handle_finance_cmd(message: Message):
@@ -798,30 +797,30 @@ if HAS_AIOGRAM:
                 sign = "➕" if tx["category"] == "income" else "➖"
                 tr_code = f" | کد رهگیری: `{tx['tracking_code']}`" if tx.get("tracking_code") else ""
                 lines.append(f"{sign} `{tx['amount']:,.0f} {tx['currency']}` — {tx.get('description', '')}{tr_code}")
-        await message.answer("\n".join(lines), parse_mode="Markdown")
+        await send_formatted_reply(message, "\n".join(lines))
 
     @router.message(Command("idea"))
     async def handle_idea_cmd(message: Message):
         parts = (message.text or "").split(maxsplit=1)
         if len(parts) < 2:
-            await message.answer("💡 لطفاً متن ایده خود را بعد از `/idea` بنویسید یا یک ویس بفرستید.")
+            await send_formatted_reply(message, "💡 لطفاً متن ایده خود را بعد از `/idea` بنویسید یا یک ویس بفرستید.")
             return
         status_msg = await message.answer("🧠 در حال پردازش و ساختاردهی ایده در Incubator...")
         res = await idea_incubator.incubate_transcript(parts[1])
         await status_msg.delete()
-        await message.answer(res["formatted_markdown"], parse_mode="Markdown")
+        await send_formatted_reply(message, res["formatted_markdown"])
 
     @router.message(Command("search"))
     async def handle_search_cmd(message: Message):
         parts = (message.text or "").split(maxsplit=1)
         if len(parts) < 2:
-            await message.answer("🔍 عبارت جستجو را وارد کنید. مثال: `/search رنگ دکمه‌ها در پروژه`")
+            await send_formatted_reply(message, "🔍 عبارت جستجو را وارد کنید. مثال: `/search رنگ دکمه‌ها در پروژه`")
             return
         query = parts[1].strip()
         q_emb = await router_client.create_embedding(query)
         results = vault.semantic_search_vault(query=query, query_embedding=q_emb, top_k=5)
         if not results:
-            await message.answer("🔍 نتیجه‌ای در حافظه معنایی یافت نشد.")
+            await send_formatted_reply(message, "🔍 نتیجه‌ای در حافظه معنایی یافت نشد.")
             return
         lines = [f"🧠 **نتایج جستجوی معنایی برای:** _{query}_\n"]
         for r in results:
@@ -830,7 +829,7 @@ if HAS_AIOGRAM:
                 f"• **[{r['type'].upper()}] {r['title']}**{proj_tag} — شباهت: `{int(r['similarity'] * 100)}%`\n"
                 f"  _{r['content'][:180]}_"
             )
-        await message.answer("\n\n".join(lines), parse_mode="Markdown")
+        await send_formatted_reply(message, "\n\n".join(lines))
 
     @router.message(Command("radar"))
     async def handle_radar_cmd(message: Message):
@@ -839,7 +838,7 @@ if HAS_AIOGRAM:
         leads = vault.get_top_freelance_leads(min_score=0, limit=3)
         await status_msg.delete()
         if not leads:
-            await message.answer("📡 هنوز پروژه فریلنسری منطبقی در دیتابیس ثبت نشده است.")
+            await send_formatted_reply(message, "📡 هنوز پروژه فریلنسری منطبقی در دیتابیس ثبت نشده است.")
             return
         for ld in leads:
             alert_txt = freelance_radar.format_telegram_alert(ld)
@@ -848,7 +847,7 @@ if HAS_AIOGRAM:
                     [InlineKeyboardButton(text="🚀 مشاهده و ارسال پیشنهاد در سایت", url=ld.get("url") or "https://ponisha.ir")]
                 ]
             )
-            await message.answer(alert_txt, reply_markup=kb, parse_mode="Markdown")
+            await send_formatted_reply(message, alert_txt, reply_markup=kb)
 
     @router.message(Command("github"))
     async def handle_github_cmd(message: Message):
@@ -856,22 +855,22 @@ if HAS_AIOGRAM:
         sub = parts[1].lower() if len(parts) > 1 else "status"
         if sub == "prs":
             res = await github_tool.list_open_prs()
-            await message.answer(f"🐙 **GitHub Open PRs:**\n```json\n{res}\n```", parse_mode="Markdown")
+            await send_formatted_reply(message, f"🐙 **GitHub Open PRs:**\n```json\n{res}\n```")
         elif sub == "ci":
             res = await github_tool.list_workflow_runs()
-            await message.answer(f"⚙️ **GitHub Actions CI/CD Runs:**\n```json\n{res}\n```", parse_mode="Markdown")
+            await send_formatted_reply(message, f"⚙️ **GitHub Actions CI/CD Runs:**\n```json\n{res}\n```")
         else:
             res = await github_tool.run_local_git("status", repo_path=agent_manager.get_active_project_path())
-            await message.answer(
-                f"🐙 **وضعیت مخزن محلی Git:**\n```\n{res.get('stdout') or res.get('stderr') or res}\n```",
-                parse_mode="Markdown"
+            await send_formatted_reply(
+                message,
+                f"🐙 **وضعیت مخزن محلی Git:**\n```\n{res.get('stdout') or res.get('stderr') or res}\n```"
             )
 
     @router.message(Command("imagine"))
     async def handle_imagine_cmd(message: Message):
         parts = (message.text or "").split(maxsplit=1)
         if len(parts) < 2:
-            await message.answer("🎨 پرامپت تصویر را وارد کنید. مثال: `/imagine futuristic Persian AI dashboard UI`")
+            await send_formatted_reply(message, "🎨 پرامپت تصویر را وارد کنید. مثال: `/imagine futuristic Persian AI dashboard UI`")
             return
         status_msg = await message.answer("🎨 در حال تولید تصویر در Image Studio...")
         res = await image_studio.generate(prompt=parts[1].strip())
@@ -882,7 +881,7 @@ if HAS_AIOGRAM:
                 caption=f"🎨 **مدل:** `{res.get('model', res.get('engine'))}`"
             )
         else:
-            await message.answer(f"❌ خطا در تولید تصویر: {res.get('error')}")
+            await send_formatted_reply(message, f"❌ خطا در تولید تصویر: {res.get('error')}")
 
     @router.message(Command("bio"))
     async def handle_bio_cmd(message: Message):
@@ -892,11 +891,11 @@ if HAS_AIOGRAM:
             lines = ["🧬 **لاگ‌های زیستی و عادت‌های ۷ روز اخیر:**\n"]
             for b in recent[:10]:
                 lines.append(f"• **{b['metric_name']}**: `{b['value']} {b.get('unit', '')}` ({b['logged_at']})")
-            await message.answer("\n".join(lines) if len(lines) > 1 else "هنوز موردی ثبت نشده است.", parse_mode="Markdown")
+            await send_formatted_reply(message, "\n".join(lines) if len(lines) > 1 else "هنوز موردی ثبت نشده است.")
             return
         logged = life_tracker.parse_and_log_bio_note(parts[1])
         summary = ", ".join(f"{x['metric_name']}={x['value']}{x.get('unit', '')}" for x in logged)
-        await message.answer(f"✅ **در سیستم سلامت ثبت شد:** `{summary}`", parse_mode="Markdown")
+        await send_formatted_reply(message, f"✅ **در سیستم سلامت ثبت شد:** `{summary}`")
 
     @router.message(Command("lab"))
     async def handle_lab_cmd(message: Message):
@@ -904,13 +903,13 @@ if HAS_AIOGRAM:
         if len(parts) < 2:
             results = vault.get_lab_results()
             if not results:
-                await message.answer("🩺 برای تحلیل آزمایش، متن یا تصویر آزمایش را بفرستید. مثال: `/lab WBC 6.2 Vitamin D 18 TSH 2.1`")
+                await send_formatted_reply(message, "🩺 برای تحلیل آزمایش، متن یا تصویر آزمایش را بفرستید. مثال: `/lab WBC 6.2 Vitamin D 18 TSH 2.1`")
                 return
             lines = ["🩺 **آخرین نتایج آزمایشگاهی ثبت شده:**\n"]
             for r in results[:10]:
                 badge = "🔴" if r["flag"] != "NORMAL" else "🟢"
                 lines.append(f"{badge} **{r['biomarker']}**: `{r['value']} {r['unit']}` [{r['flag']}]")
-            await message.answer("\n".join(lines), parse_mode="Markdown")
+            await send_formatted_reply(message, "\n".join(lines))
             return
         parsed = life_tracker.parse_and_store_lab_report(parts[1])
         lines = [f"🩺 **نتایج استخراج شده ({parsed['total_extracted']} شاخص):**\n"]
@@ -920,24 +919,24 @@ if HAS_AIOGRAM:
                 f"{badge} **{r['biomarker']}** ({r['test_category']}): `{r['value']} {r['unit']}` "
                 f"(نرمال: {r['reference_min']}–{r['reference_max']}) ➔ **{r['flag']}**"
             )
-        await message.answer("\n".join(lines), parse_mode="Markdown")
+        await send_formatted_reply(message, "\n".join(lines))
 
     @router.message(Command("briefing"))
     async def handle_briefing_cmd(message: Message):
-        await message.answer(routine_scheduler.generate_morning_briefing(), parse_mode="Markdown")
+        await send_formatted_reply(message, routine_scheduler.generate_morning_briefing())
 
     @router.message(Command("review"))
     async def handle_review_cmd(message: Message):
-        await message.answer(routine_scheduler.generate_nightly_review(), parse_mode="Markdown")
+        await send_formatted_reply(message, routine_scheduler.generate_nightly_review())
 
     @router.message(Command("backup"))
     async def handle_backup_cmd(message: Message):
         res = run_daily_backup()
-        await message.answer(
+        await send_formatted_reply(
+            message,
             f"💾 **بکاپ خودکار با موفقیت انجام شد:**\n"
             f"• مسیر: `{res['backup_dir']}`\n"
-            f"• فایل‌ها: `{len(res['files'])}`",
-            parse_mode="Markdown"
+            f"• فایل‌ها: `{len(res['files'])}`"
         )
 
     @router.message(Command("status"))
@@ -965,7 +964,7 @@ if HAS_AIOGRAM:
             f"• **تعداد تلاش‌های اتصال مجدد:** `{health['reconnect_count']}`\n"
             f"• **مسیر داده‌ها:** `{settings.VAULT_DATA_DIR}`"
         )
-        await message.answer(txt, parse_mode="Markdown")
+        await send_formatted_reply(message, txt)
 
     @router.callback_query(F.data.startswith("confirm_action:"))
     async def handle_confirm_callback(callback: CallbackQuery):
@@ -983,8 +982,8 @@ if HAS_AIOGRAM:
             confirmed=True
         )
         await callback.message.edit_text(
-            f"✅ **عملیات تایید و اجرا شد:**\n`{rec['description']}`\nنتیجه: `{res.get('status', 'done')}`",
-            parse_mode="Markdown"
+            f"✅ <b>عملیات تایید و اجرا شد:</b>\n<code>{rec['description']}</code>\nنتیجه: <code>{res.get('status', 'done')}</code>",
+            parse_mode="HTML"
         )
         await callback.answer("اجرا شد!")
 
@@ -993,7 +992,7 @@ if HAS_AIOGRAM:
         action_id = callback.data.split(":", 1)[1]
         rec = confirmation_manager.resolve_pending(action_id, approved=False)
         desc = rec["description"] if rec else action_id
-        await callback.message.edit_text(f"❌ **عملیات لغو شد:** `{desc}`", parse_mode="Markdown")
+        await callback.message.edit_text(f"❌ <b>عملیات لغو شد:</b> <code>{desc}</code>", parse_mode="HTML")
         await callback.answer("لغو شد.")
 
     @router.message(F.voice)
@@ -1023,10 +1022,7 @@ if HAS_AIOGRAM:
 
             reply = await agent.chat(messages, on_status_update=update_status)
             await status_msg.delete()
-            try:
-                await message.answer(reply, parse_mode="Markdown")
-            except Exception:
-                await message.answer(reply, parse_mode=None)
+            await send_formatted_reply(message, reply)
             await _deliver_side_effects(message)
 
         except Exception as e:
@@ -1048,8 +1044,8 @@ if HAS_AIOGRAM:
                 rec = receipt_parser.parse_and_record(message.caption, receipt_path=str(local_path))
                 if rec["duplicate"]:
                     await status_msg.edit_text(
-                        f"⚠️ **رسید تکراری تشخیص داده شد!**\nکد رهگیری `{rec['parsed']['tracking_code']}` قبلاً در دفتر مالی ثبت شده است.",
-                        parse_mode="Markdown"
+                        f"⚠️ <b>رسید تکراری تشخیص داده شد!</b>\nکد رهگیری <code>{rec['parsed']['tracking_code']}</code> قبلاً در دفتر مالی ثبت شده است.",
+                        parse_mode="HTML"
                     )
                     return
 
@@ -1080,10 +1076,7 @@ if HAS_AIOGRAM:
 
             reply = await agent.chat(messages, on_status_update=update_status)
             await status_msg.delete()
-            try:
-                await message.answer(reply, parse_mode="Markdown")
-            except Exception:
-                await message.answer(reply, parse_mode=None)
+            await send_formatted_reply(message, reply)
             await _deliver_side_effects(message)
 
         except Exception as e:
@@ -1106,10 +1099,7 @@ if HAS_AIOGRAM:
         try:
             reply = await agent.chat(messages, on_status_update=update_status)
             await status_msg.delete()
-            try:
-                await message.answer(reply, parse_mode="Markdown")
-            except Exception:
-                await message.answer(reply, parse_mode=None)
+            await send_formatted_reply(message, reply)
             await _deliver_side_effects(message)
         except Exception as e:
             err_text = str(e)[:500]

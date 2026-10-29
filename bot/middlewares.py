@@ -30,11 +30,11 @@ class WhitelistAuthMiddleware(BaseMiddleware):
         if user_id not in settings.ALLOWED_TELEGRAM_USER_IDS:
             if hasattr(event, "answer"):
                 await event.answer(
-                    f"⛔ **Access Denied / دسترسی غیرمجاز**\n\n"
+                    f"⛔ <b>Access Denied / دسترسی غیرمجاز</b>\n\n"
                     f"This bot is locked to its host machine.\n"
-                    f"Your Telegram ID: `{user_id}`\n\n"
-                    f"Add this ID to `ALLOWED_TELEGRAM_USER_IDS` in `.env` to gain access.",
-                    parse_mode="Markdown"
+                    f"Your Telegram ID: <code>{user_id}</code>\n\n"
+                    f"Add this ID to <code>ALLOWED_TELEGRAM_USER_IDS</code> in <code>.env</code> to gain access.",
+                    parse_mode="HTML"
                 )
             return None
 
