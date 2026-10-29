@@ -2,6 +2,8 @@ FROM python:3.11-slim
 
 # Install system dependencies for audio/image processing and health checks
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    python3-dev \
     ffmpeg \
     libgl1 \
     libglib2.0-0 \

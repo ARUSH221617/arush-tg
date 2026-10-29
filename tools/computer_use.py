@@ -10,7 +10,7 @@ try:
     import pyautogui
     pyautogui.FAILSAFE = True
     pyautogui.PAUSE = 0.1
-except ImportError:
+except Exception:
     mss = None
     pyautogui = None
 
@@ -85,7 +85,10 @@ class WindowsComputerController:
     def __init__(self, target_width: int = 1280, target_height: int = 800):
         self.target_width = target_width
         self.target_height = target_height
-        self._sct = mss.mss() if mss else None
+        try:
+            self._sct = mss.mss() if mss else None
+        except Exception:
+            self._sct = None
 
     def list_monitors(self) -> List[Dict[str, int]]:
         if not self._sct:
