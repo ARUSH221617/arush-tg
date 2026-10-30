@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from core.agent import agent
 from tools.agent_manager import AgentAndWorkspaceManager
@@ -166,15 +167,25 @@ class TestPhase8AgentsSkillsMCP(unittest.TestCase):
     # 4. Sub-Agent Spawning
     # ----------------------------------------------------------
     def test_subagent_spawning(self):
-        res = asyncio.run(
-            agent.run_subagent(
-                agent_slug="planner",
-                task="Create an architecture plan for microservice auth",
-                max_turns=2,
+        mock_msg = MagicMock()
+        mock_msg.tool_calls = None
+        mock_msg.content = "Sub-agent plan generated successfully."
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_resp = MagicMock()
+        mock_resp.choices = [mock_choice]
+
+        with patch.object(agent.client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = mock_resp
+            res = asyncio.run(
+                agent.run_subagent(
+                    agent_slug="planner",
+                    task="Create an architecture plan for microservice auth",
+                    max_turns=2,
+                )
             )
-        )
-        self.assertEqual(res["status"], "completed")
-        self.assertEqual(res["subagent"], "planner")
+            self.assertEqual(res["status"], "completed")
+            self.assertEqual(res["subagent"], "planner")
 
     # ----------------------------------------------------------
     # 5. Skills System (SKILL.md + SQLite + Prompt Injection)

@@ -49,8 +49,6 @@ if HAS_PYDANTIC:
         TELEGRAM_API_ID: Optional[int] = None
         TELEGRAM_API_HASH: Optional[str] = None
         TELEGRAM_FREELANCE_CHANNELS: Union[List[str], str] = [
-            "ponisha_ir",
-            "karlancer",
             "freelancer_ir",
             "python_jobs_ir"
         ]
@@ -134,7 +132,8 @@ if HAS_PYDANTIC:
         @field_validator("TELEGRAM_FREELANCE_CHANNELS", mode="before")
         @classmethod
         def parse_freelance_channels(cls, v):
-            return _parse_str_list(v, ["ponisha_ir", "karlancer", "freelancer_ir", "python_jobs_ir"])
+            res = _parse_str_list(v, ["freelancer_ir", "python_jobs_ir"])
+            return [c for c in res if c.lstrip("@").lower() not in ("karlancer", "ponisha_ir", "ponisha")]
 else:
     class Settings:
         def __init__(self):
@@ -143,10 +142,13 @@ else:
             self.TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY") or None
             self.TELEGRAM_API_ID = int(os.getenv("TELEGRAM_API_ID")) if os.getenv("TELEGRAM_API_ID") else None
             self.TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH") or None
-            self.TELEGRAM_FREELANCE_CHANNELS = _parse_str_list(
+            raw_channels = _parse_str_list(
                 os.getenv("TELEGRAM_FREELANCE_CHANNELS"),
-                ["ponisha_ir", "karlancer", "freelancer_ir", "python_jobs_ir"]
+                ["freelancer_ir", "python_jobs_ir"]
             )
+            self.TELEGRAM_FREELANCE_CHANNELS = [
+                c for c in raw_channels if c.lstrip("@").lower() not in ("karlancer", "ponisha_ir", "ponisha")
+            ]
             self.NINEROUTER_URL = os.getenv("NINEROUTER_URL", "http://localhost:20128")
             self.NINEROUTER_KEY = os.getenv("NINEROUTER_KEY") or None
             self.SYSTEM_ONE_MODEL = os.getenv("SYSTEM_ONE_MODEL", "oc/jev-1.13-free")

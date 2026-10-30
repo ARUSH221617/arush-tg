@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from unittest.mock import patch, AsyncMock
 from pathlib import Path
@@ -224,6 +225,122 @@ class TestRadarSystemImprovements(unittest.TestCase):
         digest = self.radar.format_batch_digest([lead])
         self.assertIn("گزارش دسته‌ای", digest)
         self.assertIn("توسعه ربات هوش مصنوعی تلگرام", digest)
+
+    def test_karlancer_modern_api_parsing(self):
+        sample_api_json = json.dumps({
+            "status": "success",
+            "data": {
+                "id": 1,
+                "category_id": None,
+                "projects": {
+                    "current_page": 1,
+                    "data": [
+                        {
+                            "id": 337220,
+                            "title": "تنظیمات سرور برای وردپرس",
+                            "description": "راه اندازی سرور لینوکس ابری و کانفیگ وب سرور",
+                            "min_budget": 1000000,
+                            "max_budget": 4000000,
+                            "url": "server-config-wp-2564e",
+                            "skills": [{"name": "برنامه نویسی", "id": 1282}, {"name": "سرور لینوکس", "id": 2284}],
+                            "country": "تهران",
+                            "rate_num": 4.5
+                        }
+                    ]
+                }
+            }
+        })
+        items = self.radar.parse_feed_items(sample_api_json, platform="karlancer")
+        self.assertEqual(len(items), 1)
+        item = items[0]
+        self.assertEqual(item["title"], "تنظیمات سرور برای وردپرس")
+        self.assertEqual(item["budget_min"], 1000000.0)
+        self.assertEqual(item["budget_max"], 4000000.0)
+        self.assertEqual(item["url"], "https://www.karlancer.com/projects/server-config-wp-2564e")
+        self.assertIn("سرور لینوکس", item["category"])
+        self.assertEqual(item["employer_name"], "تهران")
+        self.assertEqual(item["employer_rating"], 4.5)
+
+    def test_ponisha_modern_nextjs_parsing(self):
+        sample_next_html = """
+        <!DOCTYPE html><html><head>
+        <script id="__NEXT_DATA__" type="application/json">
+        {
+          "props": {
+            "pageProps": {
+              "dehydratedState": {
+                "queries": [
+                  {
+                    "queryKey": ["search", "projects"],
+                    "state": {
+                      "data": {
+                        "data": [
+                          {
+                            "id": "762687",
+                            "title": "بررسی امنیتی و رفع آسیب‌پذیری سایت وردپرسی",
+                            "slug": "wp-security-fix-762687",
+                            "description": "وب‌سایت ما اخیراً هک شده و نیاز به پاکسازی دارد",
+                            "amount_min": 6000000,
+                            "amount_max": 20000000,
+                            "skills": [{"id": "140", "title": "امنیت وب", "slug": "web-security"}]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+        </script>
+        </head><body></body></html>
+        """
+        items = self.radar.parse_feed_items(sample_next_html, platform="ponisha")
+        self.assertEqual(len(items), 1)
+        item = items[0]
+        self.assertEqual(item["title"], "بررسی امنیتی و رفع آسیب‌پذیری سایت وردپرسی")
+        self.assertEqual(item["budget_min"], 6000000.0)
+        self.assertEqual(item["budget_max"], 20000000.0)
+        self.assertEqual(item["url"], "https://ponisha.ir/project/762687/wp-security-fix-762687")
+        self.assertIn("امنیت وب", item["category"])
+
+    def test_telegram_skips_karlancer_and_ponisha(self):
+        # 1. Skip Karlancer and Ponisha channels directly
+        kl_items = self.radar.parse_telegram_channel_html("<div>some content</div>", "karlancer")
+        self.assertEqual(kl_items, [])
+        po_items = self.radar.parse_telegram_channel_html("<div>some content</div>", "ponisha_ir")
+        self.assertEqual(po_items, [])
+
+        # 2. In any channel, skip posts that mirror/link to karlancer or ponisha
+        sample_tg_html = """
+        <div data-post="python_jobs_ir/101">
+            <div class="tgme_widget_message_text">
+                پروژه پایتون در کارلنسر ثبت شد:
+                بودجه: ۱۰ میلیون تومان
+                <a href="https://www.karlancer.com/projects/sample-proj">لینک کارلنسر</a>
+            </div>
+        </div>
+        <div data-post="python_jobs_ir/102">
+            <div class="tgme_widget_message_text">
+                پروژه پایتون در پونیشا ثبت شد:
+                بودجه: ۱۵ میلیون تومان
+                <a href="https://ponisha.ir/project/123/sample">لینک پونیشا</a>
+            </div>
+        </div>
+        <div data-post="python_jobs_ir/103">
+            <div class="tgme_widget_message_text">
+                نیازمند برنامه‌نویس ارشد پایتون و جنگو برای توسعه وب‌سایت
+                بودجه: ۲۰ میلیون تومان
+                ارتباط با آیدی: @client_id
+            </div>
+        </div>
+        """
+        parsed = self.radar.parse_telegram_channel_html(sample_tg_html, "python_jobs_ir")
+        # Should only parse item 103 (the direct telegram project), skipping 101 and 102
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["external_id"], "tg_python_jobs_ir_103")
+        self.assertEqual(parsed[0]["url"], "https://t.me/python_jobs_ir/103")
 
 
 if __name__ == "__main__":

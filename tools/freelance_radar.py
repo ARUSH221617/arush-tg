@@ -99,6 +99,7 @@ def extract_meaningful_title(lines: List[str], fallback: str = "پروژه فر�
     for line in lines:
         cleaned = re.sub(r"^[^\w\u0600-\u06FF]+", "", line).strip()
         cleaned = re.sub(r"^(?:عنوان\s*پروژه|عنوان|نام\s*پروژه|پروژه\s*جدید)[\s:：\-]+", "", cleaned).strip()
+        cleaned = re.sub(r"^(?:و|یا|،)\s+", "", cleaned).strip()
         alnum_count = len(re.findall(r"[\w\u0600-\u06FF]", cleaned))
         if alnum_count >= 4:
             return cleaned[:110]
@@ -421,12 +422,19 @@ class TelethonChannelListener:
                 logger.info("Telethon client session not yet authorized; skipping MTProto stream listener.")
                 return False
 
-            channels = [ch.lstrip("@") for ch in settings.TELEGRAM_FREELANCE_CHANNELS]
+            channels = [
+                ch.lstrip("@") for ch in settings.TELEGRAM_FREELANCE_CHANNELS
+                if ch.lstrip("@").lower() not in ("karlancer", "ponisha_ir", "ponisha")
+            ]
 
             @self.client.on(events.NewMessage(chats=channels))
             async def _on_channel_post(event):
                 raw_text = event.raw_text or ""
                 if len(raw_text) < 25:
+                    return
+
+                # Exclude Karlancer and Ponisha forwarded/mirror posts (sourced directly from sites)
+                if re.search(r"(?:karlancer\.com|ponisha\.ir)", raw_text, re.IGNORECASE):
                     return
 
                 chat = await event.get_chat()
@@ -654,20 +662,73 @@ class FreelanceRadar:
         return accepted_leads
 
     def parse_feed_items(self, raw_html_or_json: str, platform: str) -> List[Dict[str, Any]]:
-        """Parses either JSON API payload or HTML/RSS project cards from Karlancer or Ponisha."""
+        """Parses JSON API payload, Next.js/Angular SSR state, or HTML/RSS project cards from Karlancer or Ponisha."""
         leads: List[Dict[str, Any]] = []
         content = raw_html_or_json.strip()
         if not content:
             return leads
 
+        # 1. Check Next.js SSR state (__NEXT_DATA__) e.g. Ponisha modern frontend
+        if "<script id=\"__NEXT_DATA__\"" in content:
+            m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', content, re.DOTALL)
+            if m:
+                try:
+                    next_data = json.loads(m.group(1))
+                    queries = next_data.get("props", {}).get("pageProps", {}).get("dehydratedState", {}).get("queries", [])
+                    for q in queries:
+                        q_data = q.get("state", {}).get("data", {})
+                        if isinstance(q_data, dict) and "data" in q_data:
+                            items = q_data["data"]
+                            if isinstance(items, list) and items and isinstance(items[0], dict) and "title" in items[0]:
+                                content = json.dumps(items)
+                                break
+                except Exception as e:
+                    logger.debug(f"Next.js SSR __NEXT_DATA__ parsing notice: {e}")
+
+        # 2. Check Angular SSR state (ng-state) e.g. Karlancer modern frontend
+        if "<script id=\"ng-state\"" in content:
+            m = re.search(r'<script id="ng-state"[^>]*>(.*?)</script>', content, re.DOTALL)
+            if m:
+                try:
+                    ng_state = json.loads(m.group(1))
+                    for v in ng_state.values():
+                        if isinstance(v, dict) and "b" in v and isinstance(v["b"], dict):
+                            b_data = v["b"].get("data")
+                            if isinstance(b_data, dict) and "projects" in b_data:
+                                p_list = b_data["projects"].get("data", [])
+                                if p_list:
+                                    content = json.dumps({"data": {"projects": {"data": p_list}}})
+                                    break
+                except Exception as e:
+                    logger.debug(f"Angular SSR ng-state parsing notice: {e}")
+
         if content.startswith("{") or content.startswith("["):
             try:
                 data = json.loads(content)
-                items = data if isinstance(data, list) else (
-                    data.get("data") or data.get("projects") or data.get("items") or []
-                )
-                if isinstance(items, dict) and "data" in items:
-                    items = items["data"]
+                items = []
+                if isinstance(data, list):
+                    items = data
+                elif isinstance(data, dict):
+                    # 1. Karlancer publics API: data -> projects -> data
+                    if isinstance(data.get("data"), dict) and "projects" in data["data"]:
+                        p_obj = data["data"]["projects"]
+                        if isinstance(p_obj, dict) and "data" in p_obj:
+                            items = p_obj["data"]
+                        elif isinstance(p_obj, list):
+                            items = p_obj
+                    # 2. data -> data
+                    elif isinstance(data.get("data"), dict) and "data" in data["data"]:
+                        items = data["data"]["data"]
+                    elif isinstance(data.get("data"), list):
+                        items = data["data"]
+                    # 3. projects -> data or projects as list
+                    elif isinstance(data.get("projects"), dict) and "data" in data["projects"]:
+                        items = data["projects"]["data"]
+                    elif isinstance(data.get("projects"), list):
+                        items = data["projects"]
+                    elif isinstance(data.get("items"), list):
+                        items = data["items"]
+
                 for item in items:
                     if not isinstance(item, dict):
                         continue
@@ -677,25 +738,55 @@ class FreelanceRadar:
                     raw_title = str(item.get("title") or item.get("name") or "")
                     title = extract_meaningful_title([raw_title], fallback=f"Project {pid}")
                     desc = str(item.get("description") or item.get("summary") or "")
-                    b_min = float(item.get("min_budget") or item.get("budget_min") or item.get("amount") or 0.0)
-                    b_max = float(item.get("max_budget") or item.get("budget_max") or b_min)
-                    emp_rating = item.get("employer_rating") or item.get("client_rating")
-                    url = str(item.get("url") or (
-                        f"https://www.karlancer.com/projects/{pid}" if platform == "karlancer"
-                        else f"https://ponisha.ir/project/{pid}"
-                    ))
+                    b_min = float(
+                        item.get("min_budget") or item.get("budget_min") or item.get("amount_min")
+                        or item.get("amount") or 0.0
+                    )
+                    b_max = float(
+                        item.get("max_budget") or item.get("budget_max") or item.get("amount_max")
+                        or b_min
+                    )
+                    emp_rating = (
+                        item.get("employer_rating") or item.get("client_rating") or item.get("rate_num")
+                    )
+
+                    # Extract skills/categories
+                    skills_list = []
+                    raw_skills = item.get("skills", [])
+                    if isinstance(raw_skills, list):
+                        for s in raw_skills:
+                            if isinstance(s, dict):
+                                s_name = s.get("name") or s.get("title")
+                                if s_name:
+                                    skills_list.append(str(s_name))
+                            elif isinstance(s, str):
+                                skills_list.append(s)
+                    category = ", ".join(skills_list) if skills_list else str(item.get("category") or "development")
+
+                    item_url = str(item.get("url") or "")
+                    if item_url.startswith("http://") or item_url.startswith("https://"):
+                        url = item_url
+                    elif platform == "karlancer":
+                        target_slug = item_url if item_url else pid
+                        url = f"https://www.karlancer.com/projects/{target_slug}"
+                    elif platform == "ponisha":
+                        slug = str(item.get("slug") or "")
+                        url = f"https://ponisha.ir/project/{pid}/{slug}" if slug else f"https://ponisha.ir/project/{pid}"
+                    else:
+                        url = f"https://{platform}.ir/project/{pid}"
+
                     ext_id = compute_deterministic_lead_id(platform, pid)
                     leads.append({
                         "external_id": ext_id,
                         "platform": platform,
                         "title": title,
                         "description": desc,
-                        "category": str(item.get("category") or "software"),
+                        "category": category,
                         "budget_min": b_min,
                         "budget_max": b_max,
                         "currency": "Toman",
-                        "employer_name": str(item.get("employer_name") or "کارفرما"),
-                        "employer_rating": float(emp_rating) if emp_rating is not None else 0.0,
+                        "employer_name": str(item.get("employer_name") or item.get("country") or "کارفرما"),
+                        "employer_rating": float(emp_rating) if emp_rating is not None and emp_rating != "N/A" else 0.0,
                         "url": url
                     })
                 return leads
@@ -735,6 +826,10 @@ class FreelanceRadar:
 
     def parse_telegram_channel_html(self, html: str, channel_name: str) -> List[Dict[str, Any]]:
         """Parses public Telegram channel web preview (`https://t.me/s/<channel>`)."""
+        ch_lower = channel_name.lstrip("@").lower()
+        if ch_lower in ("karlancer", "ponisha_ir", "ponisha"):
+            return []
+
         leads: List[Dict[str, Any]] = []
         blocks = re.findall(
             r'data-post="([^"]+)"[^>]*>.*?<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
@@ -742,6 +837,11 @@ class FreelanceRadar:
             re.DOTALL
         )
         for post_id, raw_msg in blocks:
+            # Karlancer and Ponisha leads are fetched directly from their official sites/APIs,
+            # so skip any post mirroring or linking to them.
+            if re.search(r"(?:karlancer\.com|ponisha\.ir)", raw_msg, re.IGNORECASE):
+                continue
+
             clean_text = clean_html_preserving_inline(raw_msg)
             if len(clean_text) < 25:
                 continue
@@ -752,12 +852,7 @@ class FreelanceRadar:
             # Extract budget with advanced Persian and range support (Suggestion 1)
             b_min, b_max, curr = parse_persian_budget(clean_text)
 
-            href_match = re.search(
-                r'href="(https?://(?:www\.)?(?:ponisha\.ir|karlancer\.com)/[^\s"]+)"',
-                raw_msg,
-                re.IGNORECASE
-            )
-            target_url = href_match.group(1) if href_match else f"https://t.me/{post_id}"
+            target_url = f"https://t.me/{post_id}"
             ext_id = f"tg_{post_id.replace('/', '_')}"
 
             leads.append({
@@ -822,12 +917,32 @@ class FreelanceRadar:
 
         # 1. Domestic Platforms (Split-Network)
         domestic_sources = [
-            ("karlancer", "https://www.karlancer.com/api/public/projects?page=1"),
-            ("ponisha", "https://ponisha.ir/search/projects/feed"),
+            (
+                "karlancer",
+                "https://www.karlancer.com/api/publics/category-page?order=newest",
+                "https://www.karlancer.com/search"
+            ),
+            (
+                "ponisha",
+                "https://ponisha.ir/search/projects/feed",
+                "https://ponisha.ir/search/projects"
+            ),
         ]
-        for platform, url in domestic_sources:
+        for item_source in domestic_sources:
+            platform = item_source[0]
+            url = item_source[1]
+            fallback_url = item_source[2] if len(item_source) > 2 else None
             try:
-                raw = await self.net.fetch_text(url)
+                raw = None
+                try:
+                    raw = await self.net.fetch_text(url)
+                except Exception as net_err:
+                    if fallback_url:
+                        logger.info(f"Primary endpoint failed for {platform} ({net_err}), trying fallback {fallback_url}")
+                        raw = await self.net.fetch_text(fallback_url)
+                    else:
+                        raise net_err
+
                 items = self.parse_feed_items(raw, platform=platform)
                 discovered.extend(items)
                 self.source_health[platform]["status"] = "ok"
@@ -842,6 +957,8 @@ class FreelanceRadar:
         # 2. Telegram Channels (via Proxy or Web Preview)
         for channel in settings.TELEGRAM_FREELANCE_CHANNELS:
             ch_clean = channel.lstrip("@")
+            if ch_clean.lower() in ("karlancer", "ponisha_ir", "ponisha"):
+                continue
             try:
                 async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
                     async with session.get(
