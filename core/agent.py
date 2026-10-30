@@ -357,6 +357,35 @@ class ClaudeManagerAgent:
                     }
                 }
             },
+            # 13.1 Habits & Future Habits Engine
+            {
+                "type": "function",
+                "function": {
+                    "name": "manage_habits",
+                    "description": (
+                        "Manage daily active habits and future habit pipeline: get daily checklist, "
+                        "mark habits complete, add new active or future habits (with start_date), "
+                        "view future habits roadmap, or view streaks and statistics."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "enum": ["checklist", "toggle", "add", "future_roadmap", "stats"],
+                                "default": "checklist"
+                            },
+                            "habit_id": {"type": "integer", "description": "Habit ID for toggling or updating."},
+                            "title": {"type": "string", "description": "Title/name of the habit for add."},
+                            "category": {"type": "string", "enum": ["productivity", "fitness", "health", "learning", "mindfulness"], "default": "productivity"},
+                            "target_value": {"type": "number", "default": 1.0},
+                            "unit": {"type": "string", "description": "e.g. pages, minutes, liters, session"},
+                            "start_date": {"type": "string", "description": "Start date 'YYYY-MM-DD'. If in future, queued into future habits pipeline."},
+                            "description": {"type": "string", "description": "Optional habit description or context."}
+                        }
+                    }
+                }
+            },
             # 14. PC Project Path & Claude Code Workspace Engine (Phase 8.1)
             {
                 "type": "function",
@@ -764,8 +793,48 @@ class ClaudeManagerAgent:
             )
 
         elif tool_name == "log_bio_habit":
-            logged = life_tracker.parse_and_log_bio_note(tool_input.get("note", ""))
-            return {"logged_entries": logged}
+            from tools.habit_tracker import habit_engine
+            note_text = tool_input.get("note", "")
+            logged = life_tracker.parse_and_log_bio_note(note_text)
+            matched_habits = habit_engine.match_and_log_voice_habits(note_text)
+            return {
+                "logged_entries": logged,
+                "auto_completed_habits": matched_habits
+            }
+
+        elif tool_name == "manage_habits":
+            from tools.habit_tracker import habit_engine
+            op = tool_input.get("operation", "checklist")
+            if op == "checklist":
+                return habit_engine.get_daily_checklist()
+            elif op == "toggle":
+                hid = int(tool_input.get("habit_id", 0))
+                if not hid:
+                    return {"error": "habit_id is required to toggle completion"}
+                return habit_engine.toggle_habit(habit_id=hid, source="agent_tool")
+            elif op == "add":
+                title = tool_input.get("title", "")
+                if not title:
+                    return {"error": "title is required to add a habit"}
+                created = habit_engine.add_habit(
+                    title=title,
+                    category=tool_input.get("category", "productivity"),
+                    target_value=float(tool_input.get("target_value", 1.0)),
+                    unit=tool_input.get("unit", ""),
+                    start_date=tool_input.get("start_date"),
+                    description=tool_input.get("description", "")
+                )
+                return {"status": "created", "habit": created}
+            elif op == "future_roadmap":
+                return {
+                    "roadmap": habit_engine.get_future_habits_roadmap(),
+                    "formatted_summary": habit_engine.format_future_habits_roadmap()
+                }
+            elif op == "stats":
+                return {
+                    "formatted_stats": habit_engine.format_habits_stats()
+                }
+            return {"error": f"Unknown manage_habits operation: {op}"}
 
         elif tool_name == "list_projects":
             return {"projects": vault.list_projects(status=tool_input.get("status"))}

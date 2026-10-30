@@ -44,6 +44,7 @@ COMMANDS_METADATA: List[Tuple[str, str, str]] = [
     ("github", "وضعیت مخزن Git، PRها و CI/CD", "Git status, open PRs, or CI runs"),
     ("imagine", "تولید تصویر با هوش مصنوعی (Cloud/ComfyUI)", "Generate AI image (Cloud/ComfyUI)"),
     ("bio", "ثبت خواب، کافئین، ورزش و عادات زیستی", "Log sleep, caffeine, workouts & habits"),
+    ("habits", "مدیریت عادات روزانه و برنامه‌ریزی عادات آینده", "Track daily habits & plan future habits"),
     ("lab", "تحلیل هوشمند برگه آزمایش خون", "Parse medical lab blood test report"),
     ("briefing", "دریافت گزارش صبحگاهی روزانه (۰۸:۳۰)", "Instant morning briefing (08:30)"),
     ("review", "دریافت مرور شبانه عملکرد (۲۲:۳۰)", "Instant nightly review (22:30)"),

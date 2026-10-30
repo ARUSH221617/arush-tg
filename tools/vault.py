@@ -164,6 +164,47 @@ class ProjectVault:
             if "is_completed" not in existing_hh_cols:
                 cursor.execute("ALTER TABLE health_and_habits ADD COLUMN is_completed INTEGER DEFAULT 1")
 
+            # 4.1 Enhanced Habits Engine (Phase 6+ & Future Habits Pipeline)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS habits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT UNIQUE NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                category TEXT DEFAULT 'productivity',
+                frequency TEXT DEFAULT 'daily',
+                target_days_per_week INTEGER DEFAULT 7,
+                target_value REAL DEFAULT 1.0,
+                unit TEXT DEFAULT '',
+                time_of_day TEXT DEFAULT 'anytime',
+                status TEXT DEFAULT 'active',
+                start_date TEXT NOT NULL,
+                end_date TEXT DEFAULT NULL,
+                priority INTEGER DEFAULT 2,
+                level INTEGER DEFAULT 1,
+                prerequisite_habit_id INTEGER DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (prerequisite_habit_id) REFERENCES habits(id) ON DELETE SET NULL
+            )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_habits_status_start ON habits(status, start_date)")
+
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS habit_completions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                habit_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                value REAL DEFAULT 1.0,
+                is_completed INTEGER DEFAULT 1,
+                notes TEXT DEFAULT '',
+                source TEXT DEFAULT 'manual',
+                logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(habit_id, date),
+                FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
+            )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_completions_habit_date ON habit_completions(habit_id, date)")
+
             # 5. Medical Lab Results (Phase 6.1)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS medical_lab_results (
@@ -766,6 +807,229 @@ class ProjectVault:
             else:
                 cursor.execute("SELECT * FROM medical_lab_results ORDER BY id DESC")
             return [dict(r) for r in cursor.fetchall()]
+
+    # ==========================================================
+    # Enhanced Habits & Future Habits Pipeline Methods
+    # ==========================================================
+    def create_habit(
+        self,
+        slug: str,
+        title: str,
+        description: str = "",
+        category: str = "productivity",
+        frequency: str = "daily",
+        target_days_per_week: int = 7,
+        target_value: float = 1.0,
+        unit: str = "",
+        time_of_day: str = "anytime",
+        status: str = "active",
+        start_date: str = "",
+        end_date: Optional[str] = None,
+        priority: int = 2,
+        level: int = 1,
+        prerequisite_habit_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Creates a new habit (active or future)."""
+        clean_slug = re.sub(r"[^\w\-]+", "_", slug.lower().strip()).strip("_") or "habit"
+        if not start_date:
+            start_date = datetime.now().strftime("%Y-%m-%d")
+
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT INTO habits (
+                slug, title, description, category, frequency, target_days_per_week,
+                target_value, unit, time_of_day, status, start_date, end_date,
+                priority, level, prerequisite_habit_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                clean_slug, title, description, category, frequency, target_days_per_week,
+                target_value, unit, time_of_day, status, start_date, end_date,
+                priority, level, prerequisite_habit_id
+            ))
+            conn.commit()
+            cursor.execute("SELECT * FROM habits WHERE id = ?", (cursor.lastrowid,))
+            return dict(cursor.fetchone())
+
+    def get_habit_by_id(self, habit_id: int) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM habits WHERE id = ?", (habit_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_habit_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
+        clean_slug = slug.strip().lower()
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM habits WHERE slug = ?", (clean_slug,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def list_habits(
+        self,
+        status: Optional[str] = None,
+        category: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            query = "SELECT * FROM habits WHERE 1=1"
+            params: List[Any] = []
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            if category:
+                query += " AND category = ?"
+                params.append(category)
+            query += " ORDER BY priority ASC, id ASC"
+            cursor.execute(query, tuple(params))
+            return [dict(r) for r in cursor.fetchall()]
+
+    def update_habit(self, habit_id: int, **fields) -> Optional[Dict[str, Any]]:
+        allowed = {
+            "title", "description", "category", "frequency", "target_days_per_week",
+            "target_value", "unit", "time_of_day", "status", "start_date", "end_date",
+            "priority", "level", "prerequisite_habit_id"
+        }
+        valid_fields = {k: v for k, v in fields.items() if k in allowed}
+        if not valid_fields:
+            return self.get_habit_by_id(habit_id)
+
+        set_clause = ", ".join(f"{k} = ?" for k in valid_fields.keys())
+        params = list(valid_fields.values()) + [habit_id]
+
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"UPDATE habits SET {set_clause} WHERE id = ?", tuple(params))
+            conn.commit()
+            return self.get_habit_by_id(habit_id)
+
+    def delete_habit(self, habit_id: int) -> bool:
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM habits WHERE id = ?", (habit_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def record_habit_completion(
+        self,
+        habit_id: int,
+        date_str: str,
+        value: float = 1.0,
+        is_completed: bool = True,
+        notes: str = "",
+        source: str = "manual"
+    ) -> Dict[str, Any]:
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT INTO habit_completions (habit_id, date, value, is_completed, notes, source)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(habit_id, date) DO UPDATE SET
+                value = excluded.value,
+                is_completed = excluded.is_completed,
+                notes = CASE WHEN excluded.notes != '' THEN excluded.notes ELSE habit_completions.notes END,
+                source = excluded.source,
+                logged_at = CURRENT_TIMESTAMP
+            """, (habit_id, date_str, value, 1 if is_completed else 0, notes, source))
+            conn.commit()
+            cursor.execute(
+                "SELECT * FROM habit_completions WHERE habit_id = ? AND date = ?",
+                (habit_id, date_str)
+            )
+            return dict(cursor.fetchone())
+
+    def toggle_habit_completion(
+        self,
+        habit_id: int,
+        date_str: str,
+        source: str = "manual"
+    ) -> Dict[str, Any]:
+        """Toggles completion state for habit on date_str (1 -> 0, or 0 -> 1, or inserts 1)."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM habit_completions WHERE habit_id = ? AND date = ?",
+                (habit_id, date_str)
+            )
+            existing = cursor.fetchone()
+            if existing:
+                new_state = 0 if existing["is_completed"] == 1 else 1
+                cursor.execute("""
+                UPDATE habit_completions
+                SET is_completed = ?, source = ?, logged_at = CURRENT_TIMESTAMP
+                WHERE habit_id = ? AND date = ?
+                """, (new_state, source, habit_id, date_str))
+                conn.commit()
+                cursor.execute(
+                    "SELECT * FROM habit_completions WHERE habit_id = ? AND date = ?",
+                    (habit_id, date_str)
+                )
+                return dict(cursor.fetchone())
+            else:
+                return self.record_habit_completion(
+                    habit_id=habit_id,
+                    date_str=date_str,
+                    value=1.0,
+                    is_completed=True,
+                    source=source
+                )
+
+    def get_habit_completion(self, habit_id: int, date_str: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM habit_completions WHERE habit_id = ? AND date = ?",
+                (habit_id, date_str)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_today_habits_with_completions(self, date_str: str) -> List[Dict[str, Any]]:
+        """Returns all active habits joined with their completion record for date_str."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT h.*,
+                   COALESCE(c.is_completed, 0) as is_done_today,
+                   c.value as logged_value,
+                   c.notes as completion_notes,
+                   c.logged_at as completion_time
+            FROM habits h
+            LEFT JOIN habit_completions c ON h.id = c.habit_id AND c.date = ?
+            WHERE h.status = 'active' AND h.start_date <= ?
+            ORDER BY h.priority ASC, h.id ASC
+            """, (date_str, date_str))
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_all_completions_for_habit(self, habit_id: int) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM habit_completions WHERE habit_id = ? ORDER BY date DESC",
+                (habit_id,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def promote_due_future_habits(self, current_date_str: str) -> List[Dict[str, Any]]:
+        """Activates any future habits whose start_date has arrived."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            SELECT * FROM habits
+            WHERE status = 'future' AND start_date <= ?
+            """, (current_date_str,))
+            due = [dict(r) for r in cursor.fetchall()]
+            if due:
+                due_ids = [r["id"] for r in due]
+                placeholders = ",".join("?" for _ in due_ids)
+                cursor.execute(
+                    f"UPDATE habits SET status = 'active' WHERE id IN ({placeholders})",
+                    tuple(due_ids)
+                )
+                conn.commit()
+            return due
 
     # ==========================================================
     # Phase 3: Freelance Radar Persistence

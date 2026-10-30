@@ -33,6 +33,7 @@ from tools.freelance_radar import freelance_radar
 from tools.github_tool import github_tool
 from tools.image_studio import image_studio
 from tools.life_tracker import life_tracker
+from tools.habit_tracker import habit_engine
 from tools.agent_manager import agent_manager
 from tools.skills_manager import skills_manager
 from tools.mcp_manager import mcp_manager, MCP_PRESETS
@@ -89,6 +90,44 @@ if HAS_AIOGRAM:
         if row:
             rows.append(row)
         return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _build_habits_kb(checklist: dict) -> InlineKeyboardMarkup:
+        rows = []
+        row = []
+        for h in checklist.get("habits", []):
+            icon = "✅" if h["is_done"] else "⬜"
+            title = h["title"][:15]
+            streak_str = f" 🔥{h['current_streak']}" if h.get("current_streak") else ""
+            row.append(
+                InlineKeyboardButton(
+                    text=f"{icon} {title}{streak_str}",
+                    callback_data=f"habit_toggle:{h['id']}:{checklist['date']}"
+                )
+            )
+            if len(row) == 2:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
+
+        rows.append([
+            InlineKeyboardButton(text="🔮 عادات آینده", callback_data="habits_nav:future"),
+            InlineKeyboardButton(text="📊 آمار استریک", callback_data="habits_nav:stats"),
+            InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data="habits_nav:refresh")
+        ])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _format_checklist_message(checklist: dict) -> str:
+        lines = [
+            f"📋 **چک‌لیست عادات روزانه ({checklist['date']})**\n",
+            f"پیشرفت امروز: `{checklist['progress_bar']}`\n"
+        ]
+        for h in checklist.get("habits", []):
+            mark = "✅" if h["is_done"] else "⬜"
+            streak_str = f" (🔥 استریک: `{h['current_streak']}` روز)" if h.get("current_streak") else ""
+            lines.append(f"• [{mark}] **{h['title']}**{streak_str}")
+        lines.append("\n💡 *برای ثبت یا تغییر وضعیت، روی دکمه‌های زیر کلیک کنید.*")
+        return "\n".join(lines)
 
     async def _deliver_side_effects(message: Message) -> None:
         """Sends any generated images or interactive confirmation buttons triggered during agent.chat()."""
@@ -1019,6 +1058,143 @@ if HAS_AIOGRAM:
         logged = life_tracker.parse_and_log_bio_note(parts[1])
         summary = ", ".join(f"{x['metric_name']}={x['value']}{x.get('unit', '')}" for x in logged)
         await send_formatted_reply(message, f"✅ **در سیستم سلامت ثبت شد:** `{summary}`")
+
+    @router.message(Command("habits"))
+    async def handle_habits_cmd(message: Message):
+        parts = (message.text or "").split(maxsplit=2)
+        sub = parts[1].lower() if len(parts) > 1 else "today"
+
+        if sub == "future":
+            roadmap_txt = habit_engine.format_future_habits_roadmap()
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 بازگشت به چک‌لیست امروز", callback_data="habits_nav:today")]
+            ])
+            await send_formatted_reply(message, roadmap_txt, reply_markup=kb)
+
+        elif sub == "stats":
+            stats_txt = habit_engine.format_habits_stats()
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 بازگشت به چک‌لیست امروز", callback_data="habits_nav:today")]
+            ])
+            await send_formatted_reply(message, stats_txt, reply_markup=kb)
+
+        elif sub == "add":
+            if len(parts) < 3:
+                await send_formatted_reply(
+                    message,
+                    "💡 **فرمت دستور افزودن عادت:**\n"
+                    "`/habits add <نام عادت> [تاریخ شروع به فرمت YYYY-MM-DD]`\n\n"
+                    "مثال برای عادت جاری:\n`/habits add ۴۵ دقیقه برنامه‌نویسی عمیق`\n\n"
+                    "مثال برای عادت آینده:\n`/habits add دویدن ۵ کیلومتر 2026-11-20`"
+                )
+                return
+
+            rest = parts[2].strip()
+            # Check if last word is a date (YYYY-MM-DD)
+            words = rest.rsplit(maxsplit=1)
+            date_match = re.match(r"^\d{4}-\d{2}-\d{2}$", words[-1]) if len(words) > 1 else None
+
+            if date_match:
+                title = words[0].strip()
+                s_date = words[-1].strip()
+            else:
+                title = rest
+                s_date = habit_engine.get_today_str()
+
+            created = habit_engine.add_habit(title=title, start_date=s_date)
+            if created["status"] == "future":
+                await send_formatted_reply(
+                    message,
+                    f"🔮 **عادت آینده با موفقیت ثبت شد:**\n"
+                    f"• **عنوان:** `{created['title']}`\n"
+                    f"• **تاریخ شروع:** `{created['start_date']}`\n"
+                    f"• **وضعیت:** در موعد مقرر خودکار فعال شده و به چک‌لیست اضافه می‌گردد.\n\n"
+                    f"مشاهده صف آینده: `/habits future`"
+                )
+            else:
+                checklist = habit_engine.get_daily_checklist()
+                kb = _build_habits_kb(checklist)
+                await send_formatted_reply(
+                    message,
+                    f"✅ **عادت جدید ثبت و فعال شد:** `{created['title']}`\n\n" + _format_checklist_message(checklist),
+                    reply_markup=kb
+                )
+
+        else:
+            checklist = habit_engine.get_daily_checklist()
+            kb = _build_habits_kb(checklist)
+            await send_formatted_reply(
+                message,
+                _format_checklist_message(checklist),
+                reply_markup=kb
+            )
+
+    @router.callback_query(F.data.startswith("habit_toggle:"))
+    async def handle_habit_toggle_callback(callback: CallbackQuery):
+        parts = callback.data.split(":")
+        if len(parts) < 3:
+            await callback.answer("داده نامعتبر است.", show_alert=True)
+            return
+
+        try:
+            habit_id = int(parts[1])
+            date_str = parts[2]
+        except ValueError:
+            await callback.answer("شناسه نامعتبر است.", show_alert=True)
+            return
+
+        res = habit_engine.toggle_habit(habit_id, date_str, source="telegram_button")
+        checklist = habit_engine.get_daily_checklist(date_str)
+        status_label = "✅ انجام شد" if res["is_done"] else "⬜ لغو شد"
+        habit_title = res.get("habit", {}).get("title", "")
+        await callback.answer(f"{habit_title[:20]}: {status_label}")
+
+        try:
+            await callback.message.edit_text(
+                text=_format_checklist_message(checklist),
+                reply_markup=_build_habits_kb(checklist),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+    @router.callback_query(F.data.startswith("habits_nav:"))
+    async def handle_habits_nav_callback(callback: CallbackQuery):
+        action = callback.data.split(":", 1)[1]
+        if action == "future":
+            roadmap_txt = habit_engine.format_future_habits_roadmap()
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 بازگشت به چک‌لیست امروز", callback_data="habits_nav:today")]
+            ])
+            try:
+                await callback.message.edit_text(roadmap_txt, reply_markup=kb, parse_mode="Markdown")
+            except Exception:
+                pass
+            await callback.answer()
+
+        elif action == "stats":
+            stats_txt = habit_engine.format_habits_stats()
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 بازگشت به چک‌لیست امروز", callback_data="habits_nav:today")]
+            ])
+            try:
+                await callback.message.edit_text(stats_txt, reply_markup=kb, parse_mode="Markdown")
+            except Exception:
+                pass
+            await callback.answer()
+
+        elif action in ("today", "refresh"):
+            checklist = habit_engine.get_daily_checklist()
+            kb = _build_habits_kb(checklist)
+            try:
+                await callback.message.edit_text(
+                    text=_format_checklist_message(checklist),
+                    reply_markup=kb,
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+            await callback.answer("به‌روزرسانی شد.")
 
     @router.message(Command("lab"))
     async def handle_lab_cmd(message: Message):

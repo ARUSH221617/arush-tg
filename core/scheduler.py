@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Awaitable, Optional, Dict, Any
 from config import settings
 from tools.vault import vault
+from tools.habit_tracker import habit_engine
 from scripts.backup import run_daily_backup
 
 
@@ -57,6 +58,16 @@ class DailyRoutineScheduler:
             for lab in flagged_labs:
                 lines.append(f"• `{lab['biomarker']}`: {lab['value']} {lab['unit']} (**{lab['flag']}**)")
 
+        # Daily Habit Checklist
+        checklist = habit_engine.get_daily_checklist()
+        if checklist.get("habits"):
+            lines.append("\n📋 **چک‌لیست عادات امروز:**")
+            for h in checklist["habits"][:6]:
+                status_icon = "✅" if h["is_done"] else "⬜"
+                streak_text = f" (🔥 {h['current_streak']} روز)" if h.get("current_streak") else ""
+                lines.append(f"• [{status_icon}] **{h['title']}**{streak_text}")
+            lines.append("💡 برای مشاهده و ثبت آنی: `/habits`")
+
         lines.append("\n💪 روز پرانرژی و پرسودی داشته باشی! اگر برنامه خاصی برای امروز داری، ویس بفرست.")
         return "\n".join(lines)
 
@@ -65,6 +76,7 @@ class DailyRoutineScheduler:
         now_str = self._local_now().strftime("%Y-%m-%d %H:%M")
         fin_today = vault.get_financial_summary(days=1)
         bio_today = vault.get_recent_bio_logs(days=1)
+        checklist = habit_engine.get_daily_checklist()
 
         lines = [
             f"🌙 **مرور شبانه آروش ({now_str})**\n",
@@ -72,13 +84,20 @@ class DailyRoutineScheduler:
             f"• ورودی امروز: `{fin_today['income_toman']:,.0f}` تومان",
             f"• خروجی امروز: `{fin_today['expense_toman']:,.0f}` تومان",
             f"• تراز خالص روز: `{fin_today['net_toman']:,.0f}` تومان ({fin_today['transaction_count']} تراکنش)\n",
-            "🧬 **عادت‌ها و لاگ‌های زیستی ثبت‌شده امروز:**"
+            f"📋 **کارنامه عادات امروز ({checklist['progress_bar']}):**"
         ]
-        if bio_today:
-            for b in bio_today[:8]:
-                lines.append(f"• ✅ **{b['metric_name']}**: `{b['value']} {b.get('unit', '')}`")
+        if checklist.get("habits"):
+            for h in checklist["habits"]:
+                status_icon = "✅" if h["is_done"] else "❌"
+                streak_text = f" (🔥 استریک: `{h['current_streak']}` روز)" if h.get("current_streak") else ""
+                lines.append(f"• {status_icon} **{h['title']}**{streak_text}")
         else:
-            lines.append("• هنوز لاگ خواب، ورزش یا کافئین برای امروز ثبت نشده است.")
+            lines.append("• عادتی ثبت نشده است.")
+
+        if bio_today:
+            lines.append("\n🧬 **سایر لاگ‌های زیستی امروز:**")
+            for b in bio_today[:5]:
+                lines.append(f"• **{b['metric_name']}**: `{b['value']} {b.get('unit', '')}`")
 
         lines.append(
             "\n🎙️ **پرامپت بازتاب شبانه (Voice Reflection):**\n"
@@ -97,6 +116,22 @@ class DailyRoutineScheduler:
             now = self._local_now()
             date_key = now.strftime("%Y-%m-%d")
             hh_mm = now.strftime("%H:%M")
+
+            # 0. Daily auto-promotion of future habits that reached their start_date
+            if self._last_triggered.get("promote_habits") != date_key:
+                self._last_triggered["promote_habits"] = date_key
+                try:
+                    promoted = habit_engine.promote_due_habits()
+                    if promoted and send_notification:
+                        for p in promoted:
+                            msg = (
+                                f"🚀 **عادت جدید از امروز فعال شد!**\n\n"
+                                f"عادت «**{p['title']}**» طبق برنامه به تاریخ شروع خود رسید و در چک‌لیست روزانه شما قرار گرفت.\n\n"
+                                f"مشاهده چک‌لیست: `/habits`"
+                            )
+                            await send_notification(msg)
+                except Exception:
+                    pass
 
             # 1. Morning Briefing (08:30)
             if hh_mm == settings.MORNING_BRIEFING_TIME and self._last_triggered.get("morning") != date_key:
