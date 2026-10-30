@@ -445,7 +445,7 @@ if HAS_AIOGRAM:
             status_msg = await message.answer(
                 f"⚡ در حال اجرای `{cli_slug}` روی مسیر `{agent_manager.get_active_project_path() or 'فعلی'}`..."
             )
-            res = await agent_manager.run_external_cli_agent(agent_name=cli_slug, prompt=prompt_txt)
+            res = await agent_manager.run_external_cli_agent(agent_name=cli_slug, prompt=prompt_txt, auto_approve=True)
             await status_msg.delete()
             if res.get("status") in ("not_found", "not_installed", "error", "disabled", "timeout"):
                 await send_formatted_reply(message, f"❌ **{res.get('status')}:**\n{res.get('error')}")
@@ -490,7 +490,7 @@ if HAS_AIOGRAM:
 
         else:
             # Allow shorthand `/cli claude_code <prompt>`
-            res = await agent_manager.run_external_cli_agent(agent_name=sub, prompt=rest)
+            res = await agent_manager.run_external_cli_agent(agent_name=sub, prompt=rest, auto_approve=True)
             if res.get("status") in ("not_found", "not_installed", "error", "disabled", "timeout"):
                 await send_formatted_reply(message, f"❌ {res.get('error')}")
             else:

@@ -185,7 +185,7 @@ PRECONFIGURED_CLI_AGENTS: List[Dict[str, Any]] = [
         "binary": "antigravity",
         "alt_binaries": ["agy", "antigravity.cmd", "antigravity.exe", "agy.cmd"],
         "args_template": ["-p", "{prompt}"],
-        "auto_approve_args": ["--yes"],
+        "auto_approve_args": ["--dangerously-skip-permissions"],
         "version_arg": "--version",
         "description": "Antigravity AI coding agent installed on PC. Runs agentic code generation and workspace tasks locally.",
     },
@@ -356,9 +356,9 @@ class AgentAndWorkspaceManager:
                         """
                         INSERT INTO external_cli_agents (
                             slug, name, binary, alt_binaries_json, args_template_json,
-                            auto_approve_args_json, version_arg, description, is_builtin, enabled
+                            auto_approve_args_json, version_arg, description, is_builtin, enabled, auto_approve
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1)
                         """,
                         (
                             cli["slug"],
@@ -369,6 +369,21 @@ class AgentAndWorkspaceManager:
                             json.dumps(cli["auto_approve_args"]),
                             cli["version_arg"],
                             cli["description"],
+                        ),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE external_cli_agents
+                        SET auto_approve_args_json = ?,
+                            alt_binaries_json = ?,
+                            auto_approve = 1
+                        WHERE slug = ? AND is_builtin = 1
+                        """,
+                        (
+                            json.dumps(cli["auto_approve_args"]),
+                            json.dumps(cli["alt_binaries"]),
+                            cli["slug"],
                         ),
                     )
 
@@ -1356,7 +1371,7 @@ class AgentAndWorkspaceManager:
         if not prompt_injected and prompt:
             cmd_args.append(prompt)
 
-        use_approve = auto_approve if auto_approve is not None else cli.get("auto_approve", False)
+        use_approve = auto_approve if auto_approve is not None else cli.get("auto_approve", True)
         if use_approve:
             for flag in cli.get("auto_approve_args") or []:
                 if flag not in cmd_args:
