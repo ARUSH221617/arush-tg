@@ -23,6 +23,7 @@ from tools.life_tracker import life_tracker
 from tools.agent_manager import agent_manager
 from tools.skills_manager import skills_manager
 from tools.mcp_manager import mcp_manager
+from tools.kde_connect import kde_connect
 
 
 class ClaudeManagerAgent:
@@ -611,6 +612,45 @@ class ClaudeManagerAgent:
                         "required": ["operation"]
                     }
                 }
+            },
+            # 20. KDE Connect Mobile Integration (SMS, Ping, Ring, Share)
+            {
+                "type": "function",
+                "function": {
+                    "name": "kde_connect",
+                    "description": (
+                        "KDE Connect mobile integration: send SMS messages via Android phone, "
+                        "list connected/paired devices, ring phone to locate it, ping notifications, "
+                        "or share links and files."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "enum": ["list_devices", "send_sms", "ring", "ping", "share"],
+                                "default": "list_devices"
+                            },
+                            "phone_number": {
+                                "type": "string",
+                                "description": "Recipient phone number with country code (e.g. +989123456789)."
+                            },
+                            "message": {
+                                "type": "string",
+                                "description": "Message text for SMS or notification ping."
+                            },
+                            "device_id": {
+                                "type": "string",
+                                "description": "Optional KDE Connect device ID (uses default if omitted)."
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "File path or URL to share to the device."
+                            }
+                        },
+                        "required": ["operation"]
+                    }
+                }
             }
         ]
 
@@ -1037,6 +1077,34 @@ class ClaudeManagerAgent:
                     arguments=tool_input.get("arguments") or {}
                 )
             return {"error": f"Unknown manage_mcp operation: {op}"}
+
+        # ==========================================================
+        # Phase 8.4: KDE Connect Android Bridge (SMS & Device Control)
+        # ==========================================================
+        elif tool_name == "kde_connect":
+            op = tool_input.get("operation", "list_devices")
+            dev_id = tool_input.get("device_id")
+            if op == "list_devices":
+                return await kde_connect.list_devices()
+            elif op == "send_sms":
+                return await kde_connect.send_sms(
+                    phone_number=tool_input.get("phone_number", ""),
+                    message=tool_input.get("message", ""),
+                    device_id=dev_id
+                )
+            elif op == "ring":
+                return await kde_connect.ring_phone(device_id=dev_id)
+            elif op == "ping":
+                return await kde_connect.ping_device(
+                    message=tool_input.get("message", "Ping from Arush Manager Agent"),
+                    device_id=dev_id
+                )
+            elif op == "share":
+                return await kde_connect.share(
+                    content_or_path=tool_input.get("content", ""),
+                    device_id=dev_id
+                )
+            return {"error": f"Unknown kde_connect operation: {op}"}
 
         return {"error": f"Unknown tool: {tool_name}"}
 

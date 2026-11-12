@@ -110,10 +110,11 @@ if HAS_PYDANTIC:
         HEALTHCHECK_PORT: int = 8089
         HEARTBEAT_INTERVAL_SECONDS: int = 60
 
-        # 8. Google Workspace MCP Integration
+        # 8. Google Workspace & Mobile Integrations
         GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
         GOOGLE_OAUTH_CLIENT_SECRET: Optional[str] = None
         GOOGLE_USER_EMAIL: Optional[str] = None
+        KDE_CONNECT_DEVICE_ID: Optional[str] = None
 
         model_config = SettingsConfigDict(
             env_file=str(DEFAULT_REPO_DIR / ".env"),
@@ -207,6 +208,7 @@ else:
             self.GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID") or None
             self.GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or None
             self.GOOGLE_USER_EMAIL = os.getenv("GOOGLE_USER_EMAIL") or None
+            self.KDE_CONNECT_DEVICE_ID = os.getenv("KDE_CONNECT_DEVICE_ID") or None
 
 
 settings = Settings()

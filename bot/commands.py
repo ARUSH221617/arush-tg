@@ -46,6 +46,8 @@ COMMANDS_METADATA: List[Tuple[str, str, str]] = [
     ("bio", "ثبت خواب، کافئین، ورزش و عادات زیستی", "Log sleep, caffeine, workouts & habits"),
     ("habits", "مدیریت عادات روزانه و برنامه‌ریزی عادات آینده", "Track daily habits & plan future habits"),
     ("lab", "تحلیل هوشمند برگه آزمایش خون", "Parse medical lab blood test report"),
+    ("sms", "ارسال پیامک از طریق گوشی (KDE Connect)", "Send SMS via Android phone (KDE Connect)"),
+    ("kde", "مدیریت گوشی اندروید، زنگ و وضعیت اتصال", "Manage KDE Connect phone, ring & battery"),
     ("briefing", "دریافت گزارش صبحگاهی روزانه (۰۸:۳۰)", "Instant morning briefing (08:30)"),
     ("review", "دریافت مرور شبانه عملکرد (۲۲:۳۰)", "Instant nightly review (22:30)"),
     ("backup", "بکاپ‌گیری آنی از دیتابیس و تنظیمات", "Instant SQLite & .env backup"),

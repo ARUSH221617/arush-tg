@@ -38,6 +38,7 @@ from tools.habit_tracker import habit_engine
 from tools.agent_manager import agent_manager
 from tools.skills_manager import skills_manager
 from tools.mcp_manager import mcp_manager, MCP_PRESETS
+from tools.kde_connect import kde_connect
 from scripts.backup import run_daily_backup
 
 router = Router() if HAS_AIOGRAM else None
@@ -764,6 +765,92 @@ if HAS_AIOGRAM:
                 message,
                 f"🔌 **نتیجه فراخوانی MCP (`{srv_name}.{t_name}`):**\n```json\n{json.dumps(res, ensure_ascii=False, indent=2)[:3500]}\n```"
             )
+
+    # ==========================================================
+    # Phase 8.4 Handlers: /sms & /kde (KDE Connect Android Bridge)
+    # ==========================================================
+    @router.message(Command("sms"))
+    async def handle_sms_cmd(message: Message):
+        parts = (message.text or "").split(maxsplit=2)
+        if len(parts) < 3:
+            await send_formatted_reply(
+                message,
+                "📱 **ارسال پیامک از طریق گوشی (KDE Connect):**\n"
+                "فرمت دستور:\n"
+                "`/sms <شماره_تلفن> <متن_پیام>`\n\n"
+                "مثال:\n"
+                "`/sms +989123456789 سلام، من در مسیر هستم.`"
+            )
+            return
+
+        phone_number = parts[1].strip()
+        sms_text = parts[2].strip()
+        res = await kde_connect.send_sms(phone_number=phone_number, message=sms_text)
+        if res.get("success"):
+            await send_formatted_reply(
+                message,
+                f"✅ **پیامک با موفقیت به شماره `{phone_number}` ارسال شد!**\n"
+                f"📝 متن: _{sms_text}_\n"
+                f"📱 دستگاه: `{res.get('device_id', 'default')}`"
+            )
+        else:
+            await send_formatted_reply(
+                message,
+                f"❌ **خطا در ارسال پیامک:**\n`{res.get('error', 'Unknown error')}`\n\n"
+                "💡 بررسی کنید که نرم‌افزار KDE Connect روی ویندوز و گوشی شما باز و متصل باشد."
+            )
+
+    @router.message(Command("kde"))
+    async def handle_kde_cmd(message: Message):
+        parts = (message.text or "").split(maxsplit=1)
+        sub = parts[1].lower().strip() if len(parts) > 1 else "devices"
+
+        if sub in ("devices", "list", "status"):
+            res = await kde_connect.list_devices()
+            if not res.get("success"):
+                await send_formatted_reply(
+                    message,
+                    f"⚠️ **وضعیت KDE Connect:**\n`{res.get('error')}`\n\n"
+                    "💡 راهنمای نصب:\n"
+                    "1. در پاورشل ویندوز: `winget install KDE.KDEConnect`\n"
+                    "2. اپلیکیشن KDE Connect را از گوگل پلی روی گوشی نصب کنید و هر دو را به یک مودم Wi-Fi متصل نمایید."
+                )
+                return
+
+            devs = res.get("devices", [])
+            lines = ["📱 **دستگاه‌های متصل به KDE Connect:**\n"]
+            if devs:
+                for d in devs:
+                    if "name" in d:
+                        reach_badge = "🟢 در دسترس" if d.get("is_reachable") else "⚪ آفلاین"
+                        pair_badge = "جفت‌شده" if d.get("is_paired") else "در انتظار جفت‌شدن"
+                        lines.append(f"• **{d['name']}** (`{d['id']}`) — {reach_badge} [{pair_badge}]")
+                    else:
+                        lines.append(f"• `{d.get('raw')}`")
+            else:
+                lines.append("⚪ در حال حاضر دستگاه جفت‌شده‌ای یافت نشد.")
+
+            lines.append(
+                "\n💡 **دستورات سریع:**\n"
+                "• زنگ زدن به گوشی (یافتن گوشی): `/kde ring`\n"
+                "• تست نوتیفیکیشن: `/kde ping`\n"
+                "• ارسال اس‌ام‌اس: `/sms <شماره> <متن>`"
+            )
+            await send_formatted_reply(message, "\n".join(lines))
+
+        elif sub == "ring":
+            res = await kde_connect.ring_phone()
+            if res.get("success"):
+                await send_formatted_reply(message, "🔔 **دستور زنگ زدن به گوشی ارسال شد!**")
+            else:
+                await send_formatted_reply(message, f"❌ خطا: `{res.get('error')}`")
+
+        elif sub == "ping":
+            res = await kde_connect.ping_device("نوتیفیکیشن تستی از طرف ایجنت آروش 🚀")
+            if res.get("success"):
+                await send_formatted_reply(message, "🔔 **پیام آزمایشی به گوشی ارسال شد!**")
+            else:
+                await send_formatted_reply(message, f"❌ خطا: `{res.get('error')}`")
 
     # ==========================================================
     # Phases 1–7 Existing Slash Command Handlers

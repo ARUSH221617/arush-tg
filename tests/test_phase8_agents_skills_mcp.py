@@ -286,6 +286,79 @@ class TestPhase8AgentsSkillsMCP(unittest.TestCase):
         self.assertEqual(gw_preset["command"], "uvx")
         self.assertIn("workspace-mcp", gw_preset["args"])
 
+    # ----------------------------------------------------------
+    # 7. KDE Connect Mobile Integration (SMS & Phone Control)
+    # ----------------------------------------------------------
+    def test_kde_connect_tool_operations(self):
+        from tools.kde_connect import KDEConnectTool
+
+        kt = KDEConnectTool()
+
+        # Test graceful missing binary handling
+        with patch.object(kt, "find_executable", return_value=None):
+            self.assertFalse(kt.is_installed())
+            res = asyncio.run(kt.send_sms("+989123456789", "Hello!"))
+            self.assertFalse(res["success"])
+            self.assertIn("not installed", res["error"])
+
+        # Test mocked device listing
+        mock_output = (
+            "- Samsung Galaxy S23: a1b2c3d4e5 (paired and reachable)\n"
+            "- Tablet Note: f6g7h8i9j0 (paired)\n"
+        )
+        with patch.object(kt, "find_executable", return_value="C:\\dummy\\kdeconnect-cli.exe"):
+            self.assertTrue(kt.is_installed())
+
+            with patch.object(kt, "_run_cli", new_callable=AsyncMock) as mock_cli:
+                mock_cli.return_value = {
+                    "success": True,
+                    "exit_code": 0,
+                    "stdout": mock_output,
+                    "stderr": "",
+                }
+                devs = asyncio.run(kt.list_devices())
+                self.assertTrue(devs["success"])
+                self.assertEqual(devs["count"], 2)
+                self.assertEqual(devs["devices"][0]["name"], "Samsung Galaxy S23")
+                self.assertEqual(devs["devices"][0]["id"], "a1b2c3d4e5")
+                self.assertTrue(devs["devices"][0]["is_reachable"])
+                self.assertTrue(devs["devices"][0]["is_paired"])
+                self.assertFalse(devs["devices"][1]["is_reachable"])
+
+            # Test send_sms
+            with patch.object(kt, "_run_cli", new_callable=AsyncMock) as mock_cli:
+                mock_cli.return_value = {
+                    "success": True,
+                    "exit_code": 0,
+                    "stdout": "SMS sent successfully",
+                    "stderr": "",
+                }
+                sms_res = asyncio.run(kt.send_sms("+989123456789", "Test message", device_id="a1b2c3d4e5"))
+                self.assertTrue(sms_res["success"])
+                self.assertEqual(sms_res["status"], "sent")
+                mock_cli.assert_called_once_with(
+                    ["--send-sms", "Test message", "--destination", "+989123456789", "-d", "a1b2c3d4e5"],
+                    timeout=30,
+                )
+
+            # Test ring_phone
+            with patch.object(kt, "_run_cli", new_callable=AsyncMock) as mock_cli:
+                mock_cli.return_value = {"success": True, "exit_code": 0, "stdout": "", "stderr": ""}
+                ring_res = asyncio.run(kt.ring_phone(device_id="a1b2c3d4e5"))
+                self.assertTrue(ring_res["success"])
+                self.assertEqual(ring_res["status"], "ringing")
+
+            # Test agent tool dispatcher
+            with patch.object(kt, "send_sms", new_callable=AsyncMock) as mock_send:
+                mock_send.return_value = {"success": True, "status": "sent"}
+                with patch("core.agent.kde_connect", kt):
+                    ag_res = asyncio.run(agent.execute_tool("kde_connect", {
+                        "operation": "send_sms",
+                        "phone_number": "+989123456789",
+                        "message": "Agent test"
+                    }))
+                    self.assertTrue(ag_res["success"])
+
 
 if __name__ == "__main__":
     unittest.main()
