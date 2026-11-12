@@ -280,6 +280,12 @@ class TestPhase8AgentsSkillsMCP(unittest.TestCase):
         self.assertEqual(imp["status"], "imported")
         self.assertIn("memory_srv", imp["imported_servers"])
 
+        # Test Google Workspace MCP Preset
+        gw_preset = self.mcp_mgr.add_preset_server("google_workspace")
+        self.assertEqual(gw_preset["slug"], "google_workspace")
+        self.assertEqual(gw_preset["command"], "uvx")
+        self.assertIn("workspace-mcp", gw_preset["args"])
+
 
 if __name__ == "__main__":
     unittest.main()

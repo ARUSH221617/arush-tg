@@ -71,6 +71,17 @@ MCP_PRESETS: Dict[str, Dict[str, Any]] = {
         "args": ["-y", "@playwright/mcp@latest"],
         "env": {},
     },
+    "google_workspace": {
+        "name": "google_workspace",
+        "description": "Google Workspace MCP (Gmail, Google Calendar via workspace-mcp)",
+        "transport": "stdio",
+        "command": "uvx",
+        "args": ["workspace-mcp", "--tools", "gmail", "calendar"],
+        "env": {
+            "GOOGLE_OAUTH_CLIENT_ID": getattr(settings, "GOOGLE_OAUTH_CLIENT_ID", "") or "",
+            "GOOGLE_OAUTH_CLIENT_SECRET": getattr(settings, "GOOGLE_OAUTH_CLIENT_SECRET", "") or "",
+        },
+    },
 }
 
 
@@ -386,7 +397,7 @@ class MCPManager:
         self,
         server: Dict[str, Any],
         requests: List[Dict[str, Any]],
-        timeout_seconds: int = 25,
+        timeout_seconds: int = 60,
     ) -> List[Dict[str, Any]]:
         """
         Spawns an MCP stdio server subprocess, sends `initialize` + `notifications/initialized`
@@ -423,7 +434,8 @@ class MCPManager:
         }
 
         all_messages = [init_req, init_notif] + requests
-        stdin_payload = "\n".join(json.dumps(m, ensure_ascii=False) for m in all_messages) + "\n"
+        expected_ids = {m["id"] for m in requests if "id" in m}
+        expected_ids.add(1)
 
         proc = await asyncio.create_subprocess_exec(
             cmd,
@@ -435,30 +447,77 @@ class MCPManager:
             cwd=cwd,
         )
 
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(input=stdin_payload.encode("utf-8")),
-                timeout=timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise TimeoutError(f"MCP server '{server['slug']}' timed out after {timeout_seconds}s")
+        stdin_payload = "\n".join(json.dumps(m, ensure_ascii=False) for m in all_messages) + "\n"
+        proc.stdin.write(stdin_payload.encode("utf-8"))
+        await proc.stdin.drain()
 
-        stdout_text = stdout_b.decode("utf-8", errors="replace")
         responses: List[Dict[str, Any]] = []
-        for line in stdout_text.splitlines():
-            line = line.strip()
-            if not line or not line.startswith("{"):
-                continue
-            try:
-                parsed = json.loads(line)
-                if isinstance(parsed, dict) and ("result" in parsed or "error" in parsed):
-                    responses.append(parsed)
-            except Exception:
-                continue
+        pending_ids = set(expected_ids)
+        stderr_lines: List[str] = []
 
-        if not responses and stderr_b:
-            err_str = stderr_b.decode("utf-8", errors="replace").strip()
+        async def _read_stderr():
+            try:
+                while True:
+                    line = await proc.stderr.readline()
+                    if not line:
+                        break
+                    stderr_lines.append(line.decode("utf-8", errors="replace"))
+            except Exception:
+                pass
+
+        async def _read_stdout():
+            try:
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    line_str = line.decode("utf-8", errors="replace").strip()
+                    if not line_str or not line_str.startswith("{"):
+                        continue
+                    try:
+                        parsed = json.loads(line_str)
+                        if isinstance(parsed, dict) and ("result" in parsed or "error" in parsed):
+                            responses.append(parsed)
+                            p_id = parsed.get("id")
+                            if p_id in pending_ids:
+                                pending_ids.remove(p_id)
+                            if not pending_ids:
+                                break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        stderr_task = asyncio.create_task(_read_stderr())
+        stdout_task = asyncio.create_task(_read_stdout())
+
+        try:
+            await asyncio.wait_for(stdout_task, timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            err_details = "".join(stderr_lines).strip()
+            err_msg = f"MCP server '{server['slug']}' timed out after {timeout_seconds}s"
+            if err_details:
+                err_msg += f". Server stderr:\n{err_details[:400]}"
+            raise TimeoutError(err_msg)
+        finally:
+            try:
+                proc.stdin.close()
+                await proc.stdin.wait_closed()
+            except Exception:
+                pass
+            try:
+                proc.terminate()
+                await proc.wait()
+            except Exception:
+                pass
+            stderr_task.cancel()
+
+        if not responses and stderr_lines:
+            err_str = "".join(stderr_lines).strip()
             raise RuntimeError(f"MCP stdio error: {err_str[:500]}")
 
         return responses
@@ -492,7 +551,7 @@ class MCPManager:
                     raise RuntimeError(f"MCP HTTP {resp.status}: {text[:400]}")
                 return await resp.json()
 
-    async def discover_server_tools(self, name_or_slug: str, timeout_seconds: int = 25) -> Dict[str, Any]:
+    async def discover_server_tools(self, name_or_slug: str, timeout_seconds: int = 60) -> Dict[str, Any]:
         """Connects to an MCP server, queries `tools/list`, and caches discovered tool schemas in SQLite."""
         srv = self.get_server(name_or_slug)
         if not srv:
@@ -548,11 +607,17 @@ class MCPManager:
         if not srv.get("enabled", True):
             return {"status": "disabled", "error": f"MCP server '{server_name}' is currently disabled."}
 
+        args = dict(arguments or {})
+        if srv["slug"] == "google_workspace" and "user_google_email" not in args:
+            default_email = getattr(settings, "GOOGLE_USER_EMAIL", None)
+            if default_email:
+                args["user_google_email"] = default_email
+
         call_req = {
             "jsonrpc": "2.0",
             "id": 3,
             "method": "tools/call",
-            "params": {"name": tool_name, "arguments": arguments or {}},
+            "params": {"name": tool_name, "arguments": args},
         }
 
         try:

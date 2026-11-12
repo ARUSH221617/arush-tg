@@ -750,6 +750,16 @@ if HAS_AIOGRAM:
                 except Exception:
                     args_dict = {}
             res = await mcp_manager.call_tool(srv_name, t_name, arguments=args_dict)
+            if res.get("status") == "success" and isinstance(res.get("result"), dict):
+                content_items = res["result"].get("content", [])
+                text_blocks = [c.get("text", "") for c in content_items if isinstance(c, dict) and c.get("text")]
+                if text_blocks:
+                    formatted_out = "\n\n".join(text_blocks)
+                    await send_formatted_reply(
+                        message,
+                        f"🔌 **نتیجه فراخوانی MCP (`{srv_name}.{t_name}`):**\n\n{formatted_out[:3500]}"
+                    )
+                    return
             await send_formatted_reply(
                 message,
                 f"🔌 **نتیجه فراخوانی MCP (`{srv_name}.{t_name}`):**\n```json\n{json.dumps(res, ensure_ascii=False, indent=2)[:3500]}\n```"
